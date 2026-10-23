@@ -16,11 +16,18 @@ npm install
 npm start
 ```
 
+On Windows, if PowerShell refuses to run `npm` ("running scripts is disabled"),
+start it directly instead, which needs no script permissions:
+
+```bash
+node src/server.js
+```
+
 Open http://localhost:4000. On first run it creates:
 
 | What | Value |
 |---|---|
-| Warehouse passcode | `warehouse` (override with `WAREHOUSE_PASSCODE`) |
+| Warehouse passcode | `warehouse` (set `WAREHOUSE_PASSCODE` on any start to change it) |
 | Demo client code | `DEMO01` |
 | Sample order sheet | http://localhost:4000/sample-orders.xlsx |
 
