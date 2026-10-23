@@ -11,8 +11,14 @@ const ROOT = join(__dirname, '..');
 
 export function ensureSeed() {
   let changed = false;
-  if (!db.settings.warehousePass) {
-    db.settings.warehousePass = process.env.WAREHOUSE_PASSCODE || 'warehouse';
+  // WAREHOUSE_PASSCODE always wins when set, so the passcode can be changed on
+  // any start. Without it, the stored value is kept (default "warehouse").
+  const envPass = process.env.WAREHOUSE_PASSCODE;
+  if (envPass && db.settings.warehousePass !== envPass) {
+    db.settings.warehousePass = envPass;
+    changed = true;
+  } else if (!db.settings.warehousePass) {
+    db.settings.warehousePass = 'warehouse';
     changed = true;
   }
   if (db.clients.length === 0) {
