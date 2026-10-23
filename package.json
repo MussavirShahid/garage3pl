@@ -1,0 +1,17 @@
+{
+  "name": "garage3pl",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Two-sided 3PL management app (client portal + warehouse portal) for a home-garage fulfillment operation.",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "seed": "node src/seed.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "multer": "^2.0.2",
+    "xlsx": "^0.18.5"
+  }
+}

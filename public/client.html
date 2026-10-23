@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Client Portal · Garage 3PL</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <div class="topbar"><div class="inner">
+    <a class="brand" href="/"><span class="dot"></span> Garage 3PL</a>
+    <span class="pill">Client portal</span>
+    <span class="spacer"></span>
+    <span id="who" class="muted"></span>
+    <button id="logout" class="btn sm" hidden>Sign out</button>
+  </div></div>
+
+  <div class="container">
+    <!-- login -->
+    <section id="login" class="card" style="max-width:420px;margin:40px auto">
+      <h1>Client sign in</h1>
+      <p class="muted">Enter the access code your 3PL gave you.</p>
+      <form id="loginForm" class="stack">
+        <div><label>Access code</label><input type="text" id="code" placeholder="e.g. DEMO01" autocomplete="off" required></div>
+        <button class="btn primary" type="submit">Continue</button>
+      </form>
+    </section>
+
+    <!-- app -->
+    <section id="app" hidden>
+      <div class="tabs">
+        <button class="tab active" data-tab="orders">Orders</button>
+        <button class="tab" data-tab="products">Products</button>
+        <button class="tab" data-tab="notifs">Notifications <span id="unread" class="badge" hidden>0</span></button>
+      </div>
+
+      <!-- ORDERS -->
+      <div id="tab-orders">
+        <div class="card" style="margin-bottom:16px">
+          <h2>Import orders from Excel</h2>
+          <p class="muted">Upload .xlsx or .csv with columns like <span class="kbd">Order Number</span>, <span class="kbd">SKU</span>, <span class="kbd">Product Name</span>, <span class="kbd">Description</span>, <span class="kbd">Qty</span>, <span class="kbd">Ship To</span>. Header names are matched flexibly. Need a template? <a href="/sample-orders.xlsx">Download the sample sheet</a>.</p>
+          <form id="importForm" class="row">
+            <input type="file" id="importFile" accept=".xlsx,.xls,.csv" required>
+            <button class="btn primary" type="submit">Import</button>
+          </form>
+          <div id="importResult" class="muted" style="margin-top:10px"></div>
+        </div>
+        <div class="card">
+          <h2>Your orders</h2>
+          <div id="orders"></div>
+        </div>
+      </div>
+
+      <!-- PRODUCTS -->
+      <div id="tab-products" hidden>
+        <div class="card">
+          <div class="row" style="justify-content:space-between">
+            <h2 style="margin:0">Products</h2>
+            <input type="search" id="prodSearch" placeholder="Search name or SKU…" style="max-width:260px">
+          </div>
+          <p class="muted">Pictures are suggested automatically from the web after import. Click a product to pick a better image or upload your own, and set its garage location.</p>
+          <div id="products" class="grid cols-3"></div>
+        </div>
+      </div>
+
+      <!-- NOTIFICATIONS -->
+      <div id="tab-notifs" hidden>
+        <div class="card">
+          <div class="row" style="justify-content:space-between">
+            <h2 style="margin:0">Notifications</h2>
+            <button id="markRead" class="btn sm">Mark all read</button>
+          </div>
+          <div id="notifs" class="stack" style="margin-top:12px"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- product modal -->
+  <div id="modalBg" class="modal-bg"><div class="modal" id="modal"></div></div>
+
+  <script src="/js/common.js"></script>
+  <script src="/js/client.js"></script>
+</body>
+</html>
