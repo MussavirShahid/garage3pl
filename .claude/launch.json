@@ -6,6 +6,11 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["src/server.js"],
       "port": 4000
+    },
+    {
+      "name": "garage3pl-attach",
+      "url": "http://localhost:4000",
+      "port": 4000
     }
   ]
 }

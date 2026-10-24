@@ -43,7 +43,7 @@
   function renderOrders() {
     const el = $('#orders');
     if (!orders.length) { el.innerHTML = '<div class="empty">No orders yet. Import an Excel sheet above to get started.</div>'; return; }
-    el.innerHTML = `<table><thead><tr><th>Order</th><th>Ship to</th><th>Items</th><th>Status</th><th>Shipping label</th><th>Created</th></tr></thead><tbody>${orders.map((o) => `
+    el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Order</th><th>Ship to</th><th>Items</th><th>Status</th><th>Shipping label</th><th>Created</th></tr></thead><tbody>${orders.map((o) => `
       <tr>
         <td><strong>${esc(o.order_number)}</strong></td>
         <td>${esc(o.ship_to) || '<span class="muted">—</span>'}</td>
@@ -54,7 +54,7 @@
           <label class="btn sm" style="margin:0;display:inline-flex">${o.has_label ? 'Replace' : 'Upload label'}<input type="file" accept=".pdf,image/*" hidden data-order="${o.id}" class="labelInput"></label>
         </td>
         <td class="muted">${esc(fmtDate(o.created_at))}</td>
-      </tr>`).join('')}</tbody></table>`;
+      </tr>`).join('')}</tbody></table></div>`;
     $$('.labelInput', el).forEach((inp) => inp.addEventListener('change', async () => {
       if (!inp.files[0]) return;
       const form = new FormData(); form.append('label', inp.files[0]);

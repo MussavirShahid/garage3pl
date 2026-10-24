@@ -62,7 +62,7 @@
   function renderOrders() {
     const el = $('#orders');
     if (!orders.length) { el.innerHTML = '<div class="empty">Nothing in this queue.</div>'; return; }
-    el.innerHTML = `<table><thead><tr><th>Client</th><th>Order</th><th>Ship to</th><th>Items</th><th>Status</th><th></th></tr></thead><tbody>${orders.map((o) => {
+    el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Client</th><th>Order</th><th>Ship to</th><th>Items</th><th>Status</th><th></th></tr></thead><tbody>${orders.map((o) => {
       const units = o.items.reduce((s, it) => s + it.quantity, 0);
       return `<tr>
         <td>${esc(o.client_name)}</td>
@@ -74,7 +74,7 @@
           <button class="btn sm pick" data-id="${o.id}">Pick list</button>
           <button class="btn sm primary print" data-id="${o.id}" ${o.has_label ? '' : 'disabled title="Client has not uploaded a label yet"'}>${o.status === 'printed' ? 'Reprint' : 'Print label'}</button>
         </td>
-      </tr>`; }).join('')}</tbody></table>`;
+      </tr>`; }).join('')}</tbody></table></div>`;
     $$('.pick', el).forEach((b) => b.addEventListener('click', () => openPick(b.dataset.id)));
     $$('.print', el).forEach((b) => b.addEventListener('click', () => printLabel(b.dataset.id)));
   }
@@ -139,9 +139,9 @@
     try { clients = await api('/api/wh/clients', { headers: H() }); } catch (err) { toast(err.message); return; }
     const el = $('#clients');
     if (!clients.length) { el.innerHTML = '<div class="empty">No clients yet.</div>'; return; }
-    el.innerHTML = `<table><thead><tr><th>Name</th><th>Access code</th><th>Orders</th></tr></thead><tbody>${clients.map((c) => `
+    el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Access code</th><th>Orders</th></tr></thead><tbody>${clients.map((c) => `
       <tr><td><strong>${esc(c.name)}</strong>${c.email ? `<div class="muted" style="font-size:12px">${esc(c.email)}</div>` : ''}</td>
-      <td><span class="kbd">${esc(c.code)}</span></td><td>${c.orders}</td></tr>`).join('')}</tbody></table>
+      <td><span class="kbd">${esc(c.code)}</span></td><td>${c.orders}</td></tr>`).join('')}</tbody></table></div>
       <p class="muted" style="font-size:13px;margin-bottom:0">Give each client their access code; they sign in at <span class="kbd">/client.html</span>.</p>`;
   }
   $('#clientForm').addEventListener('submit', async (e) => {

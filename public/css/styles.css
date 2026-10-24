@@ -93,7 +93,9 @@ label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 4px
   :root:not([data-theme="light"]) .status.printed { background: #14532d; color: #dcfce7; }
 }
 
-/* tables */
+/* tables: scroll inside the card on narrow screens instead of overflowing the page */
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 -4px; padding: 0 4px; }
+.table-wrap table { min-width: 680px; }
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 th { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
@@ -130,4 +132,6 @@ tr:last-child td { border-bottom: 0; }
 @media (max-width: 640px) {
   .pick-item { flex-wrap: wrap; }
   .container { padding: 16px 16px 48px; }
+  .toolbar { width: 100%; }
+  .toolbar > * { flex: 1 1 140px; }
 }
