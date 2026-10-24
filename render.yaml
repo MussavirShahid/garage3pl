@@ -1,0 +1,15 @@
+# Render Blueprint: free web service running the real app from this repo.
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: garage3pl
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node src/server.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: WAREHOUSE_PASSCODE
+        sync: false   # Render asks you for this value when you create the service

@@ -97,6 +97,31 @@ When the warehouse prints a label the client gets an in-app notification
 SMS or Slack, set `CLIENT_WEBHOOK_URL` and every notification is POSTed there
 as JSON. Wire that URL to Zapier, Make, n8n or your own script.
 
+## Host it online for free (to test from any browser)
+
+GitHub Pages cannot host this app: it only serves static files, and this app
+needs its Node server for imports, uploads and the API. Render's free tier
+runs it as-is from this repo:
+
+1. Sign up at https://render.com and connect your GitHub account.
+2. Click **New → Blueprint**, pick this repository, and accept the detected
+   `render.yaml`. Render asks for a `WAREHOUSE_PASSCODE`; type the one you want.
+3. Wait for the first deploy (a few minutes). Your app is at
+   `https://garage3pl.onrender.com` (or whatever name you chose).
+
+What to expect on the free plan:
+
+- The service **sleeps after 15 minutes idle** and takes 30–60 seconds to
+  wake on the next visit.
+- The disk is **not persistent**: orders, products, labels and uploaded photos
+  reset whenever the service restarts or redeploys. Fine for testing, not for
+  running the business. For real use, add a persistent disk (paid) or move the
+  store to a database.
+- Every push to `main` redeploys automatically.
+
+The app reads `PORT` from the environment, so it also runs unchanged on
+Railway, Fly.io or any Node host.
+
 ## Where data lives
 
 - `data/store.json` — all clients, products, orders, notifications
