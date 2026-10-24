@@ -101,11 +101,13 @@ as JSON. Wire that URL to Zapier, Make, n8n or your own script.
 
 GitHub Pages cannot host this app: it only serves static files, and this app
 needs its Node server for imports, uploads and the API. Render's free tier
-runs it as-is from this repo:
+runs it as-is from this repo.
 
-1. Sign up at https://render.com and connect your GitHub account.
-2. Click **New → Blueprint**, pick this repository, and accept the detected
-   `render.yaml`. Render asks for a `WAREHOUSE_PASSCODE`; type the one you want.
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/MussavirShahid/garage3pl)
+
+1. Click the button above (or sign up at https://render.com, then **New →
+   Blueprint** and pick this repository). Render reads `render.yaml`.
+2. Render asks for a `WAREHOUSE_PASSCODE`; type the one you want.
 3. Wait for the first deploy (a few minutes). Your app is at
    `https://garage3pl.onrender.com` (or whatever name you chose).
 
