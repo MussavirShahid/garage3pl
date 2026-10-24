@@ -46,7 +46,10 @@
           <div id="importResult" class="muted" style="margin-top:10px"></div>
         </div>
         <div class="card">
-          <h2>Your orders</h2>
+          <div class="row" style="justify-content:space-between;margin-bottom:8px">
+            <h2 style="margin:0">Your orders</h2>
+            <button id="newOrder" class="btn primary sm" type="button">+ Create order</button>
+          </div>
           <div id="orders"></div>
         </div>
       </div>
@@ -56,9 +59,12 @@
         <div class="card">
           <div class="row" style="justify-content:space-between">
             <h2 style="margin:0">Products</h2>
-            <input type="search" id="prodSearch" placeholder="Search name or SKU…" style="max-width:260px">
+            <div class="row">
+              <input type="search" id="prodSearch" placeholder="Search name or SKU…" style="max-width:240px">
+              <button id="newProduct" class="btn primary sm" type="button">+ Add product</button>
+            </div>
           </div>
-          <p class="muted">Pictures are suggested automatically from the web after import. Click a product to pick a better image or upload your own, and set its garage location.</p>
+          <p class="muted">Add products by hand or import them from Excel. Pictures are suggested automatically when you don't provide one. Click a product to edit it, pick a better image, upload your own, or set its garage location.</p>
           <div id="products" class="grid cols-3"></div>
         </div>
       </div>

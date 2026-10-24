@@ -49,11 +49,29 @@ matched flexibly (case-insensitive, synonyms accepted):
 | Description | Description, Desc, Details |
 | Quantity | Qty, Quantity, Units |
 | Location | Location, Bin, Shelf, Aisle |
+| Item type | Type, Category, Item Type, Product Type |
 | Ship to | Ship To, Recipient, Customer, Address |
 
 One row = one line item. Rows with the same order number become one order.
 If there is no order column, the rows are added to the product catalog only.
 Products are matched by SKU within a client, so re-importing does not duplicate them.
+
+## Adding products and orders by hand
+
+No spreadsheet needed:
+
+- **Products tab → + Add product**: name, SKU, item type, garage location,
+  description, and a photo (upload a file or paste an image link; leave both
+  empty and a picture is looked up for you).
+- **Orders tab → + Create order**: pick products and quantities, enter the
+  ship-to, and attach the shipping label in the same step or later from the
+  orders table.
+
+## Warehouse queue filters
+
+The order queue can be filtered by status, by item type (from the products'
+type field), and by a date range, and sorted newest or oldest first. Dates are
+the local calendar day, matching what the portals display.
 
 ## Product pictures
 

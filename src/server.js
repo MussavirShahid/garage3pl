@@ -44,6 +44,10 @@ const productImgUpload = multer({
 
 // ---------- helpers ----------
 const now = () => new Date().toISOString();
+const localDay = (iso) => {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 
 function productFor(clientId, { sku, name }) {
   if (sku) {
@@ -68,6 +72,7 @@ function serializeOrder(order, { includeClient = false } = {}) {
       image: p?.image || null,
       location: p?.location || '',
       description: p?.description || '',
+      type: p?.type || '',
     };
   });
   const out = {
@@ -94,7 +99,8 @@ async function backfillImages(products) {
     if (p.image) continue;
     try {
       const { results } = await findImages(p.name, { limit: 1 });
-      if (results[0]) {
+      // Re-check: the user may have uploaded a picture while the lookup ran.
+      if (results[0] && !p.image) {
         p.image = results[0].url;
         p.image_source = results[0].provider;
         db.save();
@@ -139,6 +145,64 @@ app.get('/api/client/me', clientAuth, (req, res) => {
 
 app.get('/api/client/products', clientAuth, (req, res) => {
   res.json(db.products.filter((p) => p.client_id === req.client.id));
+});
+
+// manually add a product (image can be a URL here, or uploaded right after)
+app.post('/api/client/products', clientAuth, (req, res) => {
+  const { name, sku, description, location, type, image } = req.body || {};
+  if (!name || !String(name).trim()) return res.status(400).json({ error: 'Product name is required.' });
+  const cleanSku = sku ? String(sku).trim() : null;
+  if (cleanSku && productFor(req.client.id, { sku: cleanSku })) {
+    return res.status(409).json({ error: `A product with SKU ${cleanSku} already exists.` });
+  }
+  const p = {
+    id: db.uid(),
+    client_id: req.client.id,
+    sku: cleanSku,
+    name: String(name).trim(),
+    description: String(description || '').trim(),
+    location: String(location || '').trim(),
+    type: String(type || '').trim(),
+    image: image ? String(image).trim() : null,
+    image_source: image ? 'manual' : null,
+    created_at: now(),
+  };
+  db.products.push(p);
+  db.save();
+  if (!p.image) backfillImages([p]);
+  res.json(p);
+});
+
+// manually create an order from existing products
+app.post('/api/client/orders', clientAuth, (req, res) => {
+  const { order_number, ship_to, items } = req.body || {};
+  if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'Add at least one item.' });
+  const lines = [];
+  for (const it of items) {
+    const p = db.products.find((x) => x.id === it.product_id && x.client_id === req.client.id);
+    if (!p) return res.status(400).json({ error: 'Unknown product in order.' });
+    const q = Math.max(1, parseInt(it.quantity, 10) || 1);
+    lines.push({ sku: p.sku, name: p.name, quantity: q, product_id: p.id });
+  }
+  let num = String(order_number || '').trim();
+  if (!num) num = `M-${Date.now().toString(36).toUpperCase()}`;
+  if (db.orders.some((o) => o.client_id === req.client.id && o.order_number === num)) {
+    return res.status(409).json({ error: `Order ${num} already exists.` });
+  }
+  const order = {
+    id: db.uid(),
+    client_id: req.client.id,
+    order_number: num,
+    status: 'new',
+    ship_to: String(ship_to || '').trim(),
+    items: lines,
+    label: null,
+    created_at: now(),
+    printed_at: null,
+  };
+  db.orders.push(order);
+  db.save();
+  res.json(serializeOrder(order));
 });
 
 app.get('/api/client/orders', clientAuth, (req, res) => {
@@ -190,6 +254,7 @@ app.post('/api/client/import', clientAuth, memUpload.single('file'), (req, res) 
         name: rec.name,
         description: rec.description || '',
         location: rec.location || '',
+        type: rec.type || '',
         image: null,
         image_source: null,
         created_at: now(),
@@ -200,6 +265,7 @@ app.post('/api/client/import', clientAuth, memUpload.single('file'), (req, res) 
     } else {
       if (rec.location && !product.location) product.location = rec.location;
       if (rec.description && !product.description) product.description = rec.description;
+      if (rec.type && !product.type) product.type = rec.type;
     }
 
     if (!parsed.hasOrders) continue;
@@ -259,7 +325,7 @@ app.post('/api/client/import', clientAuth, memUpload.single('file'), (req, res) 
 app.patch('/api/client/products/:id', clientAuth, (req, res) => {
   const p = db.products.find((x) => x.id === req.params.id && x.client_id === req.client.id);
   if (!p) return res.status(404).json({ error: 'Product not found.' });
-  for (const k of ['image', 'location', 'description', 'name']) {
+  for (const k of ['image', 'location', 'description', 'name', 'type']) {
     if (typeof req.body[k] === 'string') p[k] = req.body[k];
   }
   if (req.body.image) p.image_source = 'manual';
@@ -314,12 +380,30 @@ app.post('/api/wh/clients', warehouseAuth, (req, res) => {
   res.json(client);
 });
 
+// Queue with filters: status, date range (YYYY-MM-DD), item type; sort newest|oldest.
 app.get('/api/wh/orders', warehouseAuth, (req, res) => {
-  const status = req.query.status;
+  const { status, from, to, type, sort } = req.query;
   let orders = db.orders.slice();
   if (status && status !== 'all') orders = orders.filter((o) => o.status === status);
-  orders.sort((a, b) => (a.printed_at ? 1 : 0) - (b.printed_at ? 1 : 0) || b.created_at.localeCompare(a.created_at));
+  // Compare on the server's local calendar day, matching the dates people see in the UI.
+  if (from) orders = orders.filter((o) => localDay(o.created_at) >= from);
+  if (to) orders = orders.filter((o) => localDay(o.created_at) <= to);
+  if (type) {
+    const t = String(type).toLowerCase();
+    orders = orders.filter((o) => o.items.some((it) => {
+      const p = db.products.find((x) => x.id === it.product_id);
+      return p && (p.type || '').toLowerCase() === t;
+    }));
+  }
+  const dir = sort === 'oldest' ? 1 : -1;
+  orders.sort((a, b) => dir * a.created_at.localeCompare(b.created_at));
   res.json(orders.map((o) => serializeOrder(o, { includeClient: true })));
+});
+
+// distinct item types across all clients, for the warehouse filter
+app.get('/api/wh/product-types', warehouseAuth, (_req, res) => {
+  const types = [...new Set(db.products.map((p) => (p.type || '').trim()).filter(Boolean))];
+  res.json(types.sort((a, b) => a.localeCompare(b)));
 });
 
 app.get('/api/wh/orders/:id', warehouseAuth, (req, res) => {
@@ -346,7 +430,7 @@ app.post('/api/wh/orders/:id/print', warehouseAuth, (req, res) => {
 app.patch('/api/wh/products/:id', warehouseAuth, (req, res) => {
   const p = db.products.find((x) => x.id === req.params.id);
   if (!p) return res.status(404).json({ error: 'Product not found.' });
-  for (const k of ['image', 'location', 'description']) {
+  for (const k of ['image', 'location', 'description', 'type']) {
     if (typeof req.body[k] === 'string') p[k] = req.body[k];
   }
   db.save();

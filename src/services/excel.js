@@ -11,6 +11,7 @@ const SYNONYMS = {
   shipto:   ['ship to', 'shipto', 'recipient', 'customer', 'customer name', 'buyer', 'destination', 'address', 'ship to name'],
   name:     ['product', 'product name', 'name', 'title', 'item name', 'product title'],
   description: ['description', 'desc', 'details', 'long description', 'product description'],
+  type:     ['type', 'category', 'item type', 'product type', 'product category'],
 };
 
 function norm(h) {
@@ -23,7 +24,7 @@ function mapColumns(header) {
   const used = new Set();
   const map = {};
   // Priority order avoids "description" stealing the "name" slot, etc.
-  for (const field of ['order', 'sku', 'qty', 'location', 'shipto', 'description', 'name']) {
+  for (const field of ['order', 'sku', 'qty', 'location', 'shipto', 'type', 'description', 'name']) {
     for (const syn of SYNONYMS[field]) {
       const idx = normed.findIndex((h, i) => h === syn && !used.has(i));
       if (idx !== -1) { map[field] = idx; used.add(idx); break; }
@@ -67,6 +68,7 @@ export function parseWorkbook(buffer) {
       qty,
       location: get(row, 'location'),
       shipto: get(row, 'shipto'),
+      type: get(row, 'type'),
     });
   }
 

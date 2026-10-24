@@ -101,7 +101,7 @@
         ${thumb(p.image, p.name, 'lg')}
         <div style="min-width:0">
           <h3 style="margin:0">${esc(p.name)}</h3>
-          <div class="muted" style="font-size:13px">${esc(p.sku || 'no SKU')}</div>
+          <div class="muted" style="font-size:13px">${esc(p.sku || 'no SKU')}${p.type ? ` · ${esc(p.type)}` : ''}</div>
           <div style="font-size:13px;margin-top:4px">${p.location ? `📍 <strong>${esc(p.location)}</strong>` : '<span class="muted">No location set</span>'}</div>
         </div>
       </div>`).join('');
@@ -119,7 +119,10 @@
       <div class="tile">
         ${thumb(p.image, p.name, 'lg')}
         <div class="stack" style="flex:1">
-          <div><label>Garage location</label><input type="text" id="pLoc" value="${esc(p.location || '')}" placeholder="e.g. Shelf A2"></div>
+          <div class="grid cols-2">
+            <div><label>Item type / category</label><input type="text" id="pType" value="${esc(p.type || '')}" placeholder="e.g. Mug, Apparel, Candle"></div>
+            <div><label>Garage location</label><input type="text" id="pLoc" value="${esc(p.location || '')}" placeholder="e.g. Shelf A2"></div>
+          </div>
           <div><label>Description</label><textarea id="pDesc" rows="2">${esc(p.description || '')}</textarea></div>
           <div><label>Image URL</label><input type="text" id="pImg" value="${esc(p.image || '')}" placeholder="https://…"></div>
           <div class="row">
@@ -134,7 +137,7 @@
     $('#closeM').onclick = closeModal;
     $('#saveP').onclick = async () => {
       try {
-        await api(`/api/client/products/${p.id}`, { method: 'PATCH', headers: H(), body: { location: $('#pLoc').value, description: $('#pDesc').value, image: $('#pImg').value } });
+        await api(`/api/client/products/${p.id}`, { method: 'PATCH', headers: H(), body: { location: $('#pLoc').value, description: $('#pDesc').value, image: $('#pImg').value, type: $('#pType').value } });
         toast('Saved.'); closeModal(); loadProducts();
       } catch (err) { toast(err.message); }
     };
@@ -160,6 +163,87 @@
   }
   function closeModal() { $('#modalBg').classList.remove('open'); }
   $('#modalBg').addEventListener('click', (e) => { if (e.target.id === 'modalBg') closeModal(); });
+
+  // ---------- add product by hand ----------
+  $('#newProduct').addEventListener('click', openNewProduct);
+  function openNewProduct() {
+    const m = $('#modal');
+    m.innerHTML = `
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Add product</h2><button class="btn sm" id="closeM" type="button">Close</button></div>
+      <p class="muted">Upload a photo or paste an image link. Leave both empty and a picture will be looked up for you.</p>
+      <form id="npForm" class="stack">
+        <div class="grid cols-2">
+          <div><label>Product name *</label><input type="text" id="npName" required></div>
+          <div><label>SKU</label><input type="text" id="npSku" placeholder="optional, must be unique"></div>
+          <div><label>Item type / category</label><input type="text" id="npType" placeholder="e.g. Mug, Apparel, Candle"></div>
+          <div><label>Garage location</label><input type="text" id="npLoc" placeholder="e.g. Shelf A2"></div>
+        </div>
+        <div><label>Description</label><textarea id="npDesc" rows="3"></textarea></div>
+        <div class="grid cols-2">
+          <div><label>Upload image</label><input type="file" id="npFile" accept="image/*"></div>
+          <div><label>…or image URL</label><input type="text" id="npImg" placeholder="https://…"></div>
+        </div>
+        <div class="row" style="justify-content:flex-end"><button class="btn primary" type="submit">Add product</button></div>
+      </form>`;
+    $('#modalBg').classList.add('open');
+    $('#closeM').onclick = closeModal;
+    $('#npForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const file = $('#npFile').files[0];
+      const imgUrl = $('#npImg').value.trim();
+      try {
+        const p = await api('/api/client/products', { method: 'POST', headers: H(), body: {
+          name: $('#npName').value, sku: $('#npSku').value, type: $('#npType').value,
+          location: $('#npLoc').value, description: $('#npDesc').value, image: file ? '' : imgUrl,
+        } });
+        if (file) {
+          const form = new FormData(); form.append('image', file);
+          await api(`/api/client/products/${p.id}/image`, { method: 'POST', form, headers: H() });
+        }
+        toast('Product added.'); closeModal(); await loadProducts();
+        if (!file && !imgUrl) setTimeout(loadProducts, 12000); // picture lookup runs in the background
+      } catch (err) { toast(err.message); }
+    };
+  }
+
+  // ---------- create order by hand ----------
+  $('#newOrder').addEventListener('click', openNewOrder);
+  function openNewOrder() {
+    if (!products.length) { toast('Add a product first, on the Products tab.'); return; }
+    const m = $('#modal');
+    const opts = products.map((p) => `<option value="${p.id}">${esc(p.name)}${p.sku ? ` (${esc(p.sku)})` : ''}</option>`).join('');
+    const lineRow = () => `<div class="row lineRow"><select class="lineProd" style="flex:1;min-width:200px">${opts}</select><input type="number" class="lineQty" min="1" value="1" style="width:84px" title="Quantity"><button type="button" class="btn sm rmLine" title="Remove">✕</button></div>`;
+    m.innerHTML = `
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Create order</h2><button class="btn sm" id="closeM" type="button">Close</button></div>
+      <form id="noForm" class="stack">
+        <div class="grid cols-2">
+          <div><label>Order number</label><input type="text" id="noNum" placeholder="leave blank to auto-generate"></div>
+          <div><label>Ship to</label><input type="text" id="noShip" placeholder="Name, city, state"></div>
+        </div>
+        <div><label>Items and quantities</label><div id="noLines" class="stack">${lineRow()}</div><button type="button" class="btn sm" id="addLine" style="margin-top:8px">+ Add another item</button></div>
+        <div><label>Shipping label (PDF or image; you can also add it later)</label><input type="file" id="noLabel" accept=".pdf,image/*"></div>
+        <div class="row" style="justify-content:flex-end"><button class="btn primary" type="submit">Create order</button></div>
+      </form>`;
+    $('#modalBg').classList.add('open');
+    $('#closeM').onclick = closeModal;
+    const lines = $('#noLines');
+    const wire = () => $$('.rmLine', lines).forEach((b) => { b.onclick = () => { if ($$('.lineRow', lines).length > 1) b.closest('.lineRow').remove(); }; });
+    wire();
+    $('#addLine').onclick = () => { lines.insertAdjacentHTML('beforeend', lineRow()); wire(); };
+    $('#noForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const items = $$('.lineRow', lines).map((r) => ({ product_id: $('.lineProd', r).value, quantity: $('.lineQty', r).value }));
+      const label = $('#noLabel').files[0];
+      try {
+        const o = await api('/api/client/orders', { method: 'POST', headers: H(), body: { order_number: $('#noNum').value, ship_to: $('#noShip').value, items } });
+        if (label) {
+          const form = new FormData(); form.append('label', label);
+          await api(`/api/client/orders/${o.id}/label`, { method: 'POST', form, headers: H() });
+        }
+        toast(`Order ${o.order_number} created${label ? ' with its label' : ''}.`); closeModal(); loadOrders();
+      } catch (err) { toast(err.message); }
+    };
+  }
 
   // ---------- notifications ----------
   async function loadNotifs() {

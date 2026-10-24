@@ -35,13 +35,21 @@
           <div class="row" style="justify-content:space-between;margin-bottom:10px">
             <h2 style="margin:0">Order queue</h2>
             <div class="row">
-              <select id="statusFilter" style="width:auto">
+              <select id="statusFilter" style="width:auto" title="Status">
                 <option value="label_ready">Ready to print</option>
                 <option value="new">Awaiting label</option>
                 <option value="printed">Printed</option>
-                <option value="all">All</option>
+                <option value="all">All statuses</option>
               </select>
-              <button id="refresh" class="btn sm">Refresh</button>
+              <select id="typeFilter" style="width:auto" title="Item type"><option value="">All item types</option></select>
+              <label class="row" style="margin:0;gap:6px;font-size:13px">From <input type="date" id="fromDate" style="width:auto"></label>
+              <label class="row" style="margin:0;gap:6px;font-size:13px">To <input type="date" id="toDate" style="width:auto"></label>
+              <button id="clearDates" class="btn sm" type="button" title="Clear dates">Clear dates</button>
+              <select id="sortOrder" style="width:auto" title="Sort by date">
+                <option value="newest">Newest first</option>
+                <option value="oldest">Oldest first</option>
+              </select>
+              <button id="refresh" class="btn sm" type="button">Refresh</button>
             </div>
           </div>
           <div id="orders"></div>

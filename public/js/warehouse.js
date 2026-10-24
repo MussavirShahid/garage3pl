@@ -18,7 +18,7 @@
 
   function enter() {
     $('#login').hidden = true; $('#app').hidden = false; $('#logout').hidden = false;
-    loadOrders(); loadClients();
+    loadTypes(); loadOrders(); loadClients();
     setInterval(loadOrders, 20000);
   }
 
@@ -29,14 +29,34 @@
   }));
 
   // ---------- orders ----------
-  $('#statusFilter').addEventListener('change', loadOrders);
-  $('#refresh').addEventListener('click', loadOrders);
+  for (const id of ['statusFilter', 'typeFilter', 'fromDate', 'toDate', 'sortOrder']) $('#' + id).addEventListener('change', loadOrders);
+  $('#refresh').addEventListener('click', () => { loadTypes(); loadOrders(); });
+  $('#clearDates').addEventListener('click', () => { $('#fromDate').value = ''; $('#toDate').value = ''; loadOrders(); });
+
+  function queryString() {
+    const q = new URLSearchParams();
+    q.set('status', $('#statusFilter').value);
+    q.set('sort', $('#sortOrder').value);
+    if ($('#typeFilter').value) q.set('type', $('#typeFilter').value);
+    if ($('#fromDate').value) q.set('from', $('#fromDate').value);
+    if ($('#toDate').value) q.set('to', $('#toDate').value);
+    return q.toString();
+  }
 
   async function loadOrders() {
-    const status = $('#statusFilter').value;
-    try { orders = await api(`/api/wh/orders?status=${encodeURIComponent(status)}`, { headers: H() }); }
+    try { orders = await api(`/api/wh/orders?${queryString()}`, { headers: H() }); }
     catch (err) { toast(err.message); return; }
     renderOrders();
+  }
+
+  async function loadTypes() {
+    try {
+      const types = await api('/api/wh/product-types', { headers: H() });
+      const sel = $('#typeFilter');
+      const cur = sel.value;
+      sel.innerHTML = '<option value="">All item types</option>' + types.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
+      if (types.includes(cur)) sel.value = cur;
+    } catch { /* non-fatal: filter just stays empty */ }
   }
 
   function renderOrders() {
@@ -87,7 +107,7 @@
           ${thumb(it.image, it.name, 'lg')}
           <div style="flex:1;min-width:0">
             <h3 style="margin:0">${esc(it.name)}</h3>
-            <div class="muted" style="font-size:13px">${esc(it.sku || 'no SKU')}</div>
+            <div class="muted" style="font-size:13px">${esc(it.sku || 'no SKU')}${it.type ? ` · ${esc(it.type)}` : ''}</div>
             ${it.description ? `<div style="font-size:13px;margin-top:2px">${esc(it.description)}</div>` : ''}
             <div style="margin-top:6px">${it.location ? `📍 <span class="loc">${esc(it.location)}</span>` : '<span class="muted">No location set</span>'}
               ${it.product_id ? `<button class="btn sm setloc" data-pid="${it.product_id}" data-cur="${esc(it.location || '')}" style="margin-left:8px">Set location</button>` : ''}</div>
