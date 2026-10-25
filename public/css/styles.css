@@ -156,6 +156,7 @@ input[type=file] { font: inherit; color: var(--muted); min-height: 44px; padding
 /* ---------- tables ---------- */
 .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 calc(-1 * var(--space-2)); padding: 0 var(--space-2); }
 .table-wrap table { min-width: 720px; }
+.table-wrap.compact table { min-width: 460px; }
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: var(--space-3) var(--space-2); border-bottom: 1px solid var(--line); vertical-align: middle; }
 th { font-size: var(--fs-xs); color: var(--muted); font-weight: 600; letter-spacing: .02em; }

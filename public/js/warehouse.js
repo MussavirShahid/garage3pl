@@ -150,7 +150,7 @@
     if (clients.some((c) => c.id === cur)) sel.value = cur;
     const el = $('#clients');
     if (!clients.length) { el.innerHTML = `<div class="empty">${icon('user')}<strong>No clients yet</strong><span>Create one on the left and share the access code.</span></div>`; return; }
-    el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Access code</th><th>Orders</th><th></th></tr></thead><tbody>${clients.map((c) => `
+    el.innerHTML = `<div class="table-wrap compact"><table><thead><tr><th>Name</th><th>Access code</th><th>Orders</th><th></th></tr></thead><tbody>${clients.map((c) => `
       <tr><td><strong>${esc(c.name)}</strong>${c.email ? `<div class="cell-sub">${esc(c.email)}</div>` : ''}</td>
       <td><span class="kbd">${esc(c.code)}</span></td><td>${c.orders}</td>
       <td style="text-align:right"><button class="btn sm danger delClient" type="button" data-id="${esc(c.id)}" data-name="${esc(c.name)}" data-orders="${c.orders}">${icon('trash')} Delete</button></td></tr>`).join('')}</tbody></table></div>
