@@ -1,5 +1,5 @@
 (() => {
-  const { $, $$, esc, toast, api, fmtDate, statusLabel, thumb } = G;
+  const { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, fmtDate, statusLabel, thumb } = G;
   const KEY = 'g3_client_code';
   let code = localStorage.getItem(KEY) || '';
   let orders = [], products = [], notifs = [];
@@ -9,12 +9,14 @@
   $('#loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const c = $('#code').value.trim().toUpperCase();
-    try {
-      const r = await api('/api/auth/client', { method: 'POST', body: { code: c } });
-      code = c; localStorage.setItem(KEY, code);
-      $('#who').textContent = r.client.name;
-      enter();
-    } catch (err) { toast(err.message); }
+    await busy(e.submitter, async () => {
+      try {
+        const r = await api('/api/auth/client', { method: 'POST', body: { code: c } });
+        code = c; localStorage.setItem(KEY, code);
+        $('#who').textContent = r.client.name;
+        enter();
+      } catch (err) { fieldError($('#code'), err.message); }
+    });
   });
   $('#logout').addEventListener('click', () => { localStorage.removeItem(KEY); location.reload(); });
 
@@ -37,12 +39,13 @@
 
   // ---------- orders ----------
   async function loadOrders() {
+    if (!orders.length) $('#orders').innerHTML = skeleton(3);
     orders = await api('/api/client/orders', { headers: H() });
     renderOrders();
   }
   function renderOrders() {
     const el = $('#orders');
-    if (!orders.length) { el.innerHTML = '<div class="empty">No orders yet. Import an Excel sheet above to get started.</div>'; return; }
+    if (!orders.length) { el.innerHTML = `<div class="empty">${icon('box')}<strong>No orders yet</strong><span>Import an Excel sheet above, or create one by hand.</span><button class="btn primary sm" type="button" id="emptyNewOrder">${icon('plus')} Create order</button></div>`; const b = $('#emptyNewOrder'); if (b) b.onclick = openNewOrder; return; }
     el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Order</th><th>Ship to</th><th>Items</th><th>Status</th><th>Shipping label</th><th>Created</th></tr></thead><tbody>${orders.map((o) => `
       <tr>
         <td><strong>${esc(o.order_number)}</strong></td>
@@ -50,10 +53,10 @@
         <td><div class="row">${o.items.map((it) => `<span class="row" title="${esc(it.name)}">${thumb(it.image, it.name)}<span>×${it.quantity}</span></span>`).join('')}</div></td>
         <td><span class="status ${esc(o.status)}">${esc(statusLabel(o.status))}</span>${o.printed_at ? `<div class="muted" style="font-size:12px">${esc(fmtDate(o.printed_at))}</div>` : ''}</td>
         <td>
-          ${o.has_label ? `<a class="btn sm" target="_blank" href="/api/client/orders/${o.id}/label?code=${encodeURIComponent(code)}">View label</a> ` : ''}
-          <label class="btn sm" style="margin:0;display:inline-flex">${o.has_label ? 'Replace' : 'Upload label'}<input type="file" accept=".pdf,image/*" hidden data-order="${o.id}" class="labelInput"></label>
+          ${o.has_label ? `<a class="btn sm" target="_blank" href="/api/client/orders/${o.id}/label?code=${encodeURIComponent(code)}">${icon('file')} View label</a> ` : ''}
+          <label class="btn sm" style="margin:0;display:inline-flex">${icon('upload')} ${o.has_label ? 'Replace' : 'Upload label'}<input type="file" accept=".pdf,image/*" hidden data-order="${o.id}" class="labelInput"></label>
         </td>
-        <td class="muted">${esc(fmtDate(o.created_at))}</td>
+        <td class="muted small">${esc(fmtDate(o.created_at))}</td>
       </tr>`).join('')}</tbody></table></div>`;
     $$('.labelInput', el).forEach((inp) => inp.addEventListener('change', async () => {
       if (!inp.files[0]) return;
@@ -73,7 +76,7 @@
     const form = new FormData(); form.append('file', f);
     const out = $('#importResult');
     out.textContent = 'Importing…';
-    try {
+    await busy(e.submitter, async () => { try {
       const r = await api('/api/client/import', { method: 'POST', form, headers: H() });
       const mapped = Object.entries(r.mapping).map(([k, v]) => `${k} ← "${esc(v)}"`).join(', ');
       out.innerHTML = `Imported <strong>${r.rows}</strong> rows: <strong>${r.orders_added}</strong> orders, <strong>${r.products_added}</strong> new products.${r.catalog_only ? ' (No order column found, so products were added to your catalog only.)' : ''}<br><span style="font-size:12px">Columns detected: ${mapped}</span><br><span style="font-size:12px">Product pictures are being looked up in the background. Refresh Products in a moment.</span>`;
@@ -81,11 +84,12 @@
       await refreshAll();
       setTimeout(loadProducts, 6000);
       setTimeout(loadProducts, 15000);
-    } catch (err) { out.textContent = ''; toast(err.message); }
+    } catch (err) { out.textContent = ''; fieldError($('#importFile'), err.message); } });
   });
 
   // ---------- products ----------
   async function loadProducts() {
+    if (!products.length) $('#products').innerHTML = '<div style="grid-column:1/-1">' + skeleton(2) + '</div>';
     products = await api('/api/client/products', { headers: H() });
     renderProducts();
     renderOrders();
@@ -95,14 +99,14 @@
     const q = $('#prodSearch').value.trim().toLowerCase();
     const list = products.filter((p) => !q || (p.name + ' ' + (p.sku || '')).toLowerCase().includes(q));
     const el = $('#products');
-    if (!list.length) { el.innerHTML = '<div class="empty" style="grid-column:1/-1">No products yet.</div>'; return; }
+    if (!list.length) { el.innerHTML = `<div class="empty" style="grid-column:1/-1">${icon('image')}<strong>${q ? 'No products match your search' : 'No products yet'}</strong><span>${q ? 'Try a different name or SKU.' : 'Add one by hand or import an Excel sheet from the Orders tab.'}</span></div>`; return; }
     el.innerHTML = list.map((p) => `
       <div class="card tile" style="cursor:pointer" data-id="${p.id}">
         ${thumb(p.image, p.name, 'lg')}
         <div style="min-width:0">
           <h3 style="margin:0">${esc(p.name)}</h3>
           <div class="muted" style="font-size:13px">${esc(p.sku || 'no SKU')}${p.type ? ` · ${esc(p.type)}` : ''}</div>
-          <div style="font-size:13px;margin-top:4px">${p.location ? `📍 <strong>${esc(p.location)}</strong>` : '<span class="muted">No location set</span>'}</div>
+          <div class="small" style="margin-top:4px">${p.location ? `<span class="loc">${icon('pin')} ${esc(p.location)}</span>` : '<span class="muted">No location set</span>'}</div>
         </div>
       </div>`).join('');
     $$('.tile', el).forEach((t) => t.addEventListener('click', () => openProduct(t.dataset.id)));
@@ -113,7 +117,7 @@
     if (!p) return;
     const m = $('#modal');
     m.innerHTML = `
-      <div class="row" style="justify-content:space-between"><h2 style="margin:0">${esc(p.name)}</h2><button class="btn sm" id="closeM">Close</button></div>
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">${esc(p.name)}</h2><button class="btn sm icon-btn" id="closeM" type="button" aria-label="Close">${icon('x')}</button></div>
       <div class="muted">${esc(p.sku || '')}</div>
       <hr class="sep">
       <div class="tile">
@@ -126,21 +130,21 @@
           <div><label>Description</label><textarea id="pDesc" rows="2">${esc(p.description || '')}</textarea></div>
           <div><label>Image URL</label><input type="text" id="pImg" value="${esc(p.image || '')}" placeholder="https://…"></div>
           <div class="row">
-            <button class="btn primary" id="saveP">Save</button>
-            <label class="btn" style="margin:0">Upload image<input type="file" accept="image/*" hidden id="upImg"></label>
-            <button class="btn" id="findImg">Find image online</button>
+            <button class="btn primary" id="saveP" type="button">${icon('check')} Save</button>
+            <label class="btn" style="margin:0">${icon('upload')} Upload image<input type="file" accept="image/*" hidden id="upImg"></label>
+            <button class="btn" id="findImg" type="button">${icon('search')} Find image online</button>
           </div>
         </div>
       </div>
       <div id="imgResults" style="margin-top:14px"></div>`;
     $('#modalBg').classList.add('open');
     $('#closeM').onclick = closeModal;
-    $('#saveP').onclick = async () => {
+    $('#saveP').onclick = () => busy($('#saveP'), async () => {
       try {
         await api(`/api/client/products/${p.id}`, { method: 'PATCH', headers: H(), body: { location: $('#pLoc').value, description: $('#pDesc').value, image: $('#pImg').value, type: $('#pType').value } });
         toast('Saved.'); closeModal(); loadProducts();
       } catch (err) { toast(err.message); }
-    };
+    });
     $('#upImg').onchange = async (e) => {
       if (!e.target.files[0]) return;
       const form = new FormData(); form.append('image', e.target.files[0]);
@@ -169,11 +173,11 @@
   function openNewProduct() {
     const m = $('#modal');
     m.innerHTML = `
-      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Add product</h2><button class="btn sm" id="closeM" type="button">Close</button></div>
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Add product</h2><button class="btn sm icon-btn" id="closeM" type="button" aria-label="Close">${icon('x')}</button></div>
       <p class="muted">Upload a photo or paste an image link. Leave both empty and a picture will be looked up for you.</p>
       <form id="npForm" class="stack">
         <div class="grid cols-2">
-          <div><label>Product name *</label><input type="text" id="npName" required></div>
+          <div><label>Product name <span class="req" aria-hidden="true">*</span></label><input type="text" id="npName" required aria-required="true"></div>
           <div><label>SKU</label><input type="text" id="npSku" placeholder="optional, must be unique"></div>
           <div><label>Item type / category</label><input type="text" id="npType" placeholder="e.g. Mug, Apparel, Candle"></div>
           <div><label>Garage location</label><input type="text" id="npLoc" placeholder="e.g. Shelf A2"></div>
@@ -187,11 +191,11 @@
       </form>`;
     $('#modalBg').classList.add('open');
     $('#closeM').onclick = closeModal;
-    $('#npForm').onsubmit = async (e) => {
+    $('#npForm').onsubmit = (e) => {
       e.preventDefault();
       const file = $('#npFile').files[0];
       const imgUrl = $('#npImg').value.trim();
-      try {
+      busy(e.submitter, async () => { try {
         const p = await api('/api/client/products', { method: 'POST', headers: H(), body: {
           name: $('#npName').value, sku: $('#npSku').value, type: $('#npType').value,
           location: $('#npLoc').value, description: $('#npDesc').value, image: file ? '' : imgUrl,
@@ -202,7 +206,7 @@
         }
         toast('Product added.'); closeModal(); await loadProducts();
         if (!file && !imgUrl) setTimeout(loadProducts, 12000); // picture lookup runs in the background
-      } catch (err) { toast(err.message); }
+      } catch (err) { fieldError($('#npName'), err.message); } });
     };
   }
 
@@ -212,15 +216,15 @@
     if (!products.length) { toast('Add a product first, on the Products tab.'); return; }
     const m = $('#modal');
     const opts = products.map((p) => `<option value="${p.id}">${esc(p.name)}${p.sku ? ` (${esc(p.sku)})` : ''}</option>`).join('');
-    const lineRow = () => `<div class="row lineRow"><select class="lineProd" style="flex:1;min-width:200px">${opts}</select><input type="number" class="lineQty" min="1" value="1" style="width:84px" title="Quantity"><button type="button" class="btn sm rmLine" title="Remove">✕</button></div>`;
+    const lineRow = () => `<div class="row lineRow"><select class="lineProd" style="flex:1;min-width:200px">${opts}</select><input type="number" class="lineQty" min="1" value="1" style="width:84px" title="Quantity"><button type="button" class="btn sm icon-btn rmLine" aria-label="Remove item">${icon('x')}</button></div>`;
     m.innerHTML = `
-      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Create order</h2><button class="btn sm" id="closeM" type="button">Close</button></div>
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Create order</h2><button class="btn sm icon-btn" id="closeM" type="button" aria-label="Close">${icon('x')}</button></div>
       <form id="noForm" class="stack">
         <div class="grid cols-2">
           <div><label>Order number</label><input type="text" id="noNum" placeholder="leave blank to auto-generate"></div>
           <div><label>Ship to</label><input type="text" id="noShip" placeholder="Name, city, state"></div>
         </div>
-        <div><label>Items and quantities</label><div id="noLines" class="stack">${lineRow()}</div><button type="button" class="btn sm" id="addLine" style="margin-top:8px">+ Add another item</button></div>
+        <div><label>Items and quantities</label><div id="noLines" class="stack">${lineRow()}</div><button type="button" class="btn sm" id="addLine" style="margin-top:8px">${icon('plus')} Add another item</button></div>
         <div><label>Shipping label (PDF or image; you can also add it later)</label><input type="file" id="noLabel" accept=".pdf,image/*"></div>
         <div class="row" style="justify-content:flex-end"><button class="btn primary" type="submit">Create order</button></div>
       </form>`;
@@ -230,18 +234,18 @@
     const wire = () => $$('.rmLine', lines).forEach((b) => { b.onclick = () => { if ($$('.lineRow', lines).length > 1) b.closest('.lineRow').remove(); }; });
     wire();
     $('#addLine').onclick = () => { lines.insertAdjacentHTML('beforeend', lineRow()); wire(); };
-    $('#noForm').onsubmit = async (e) => {
+    $('#noForm').onsubmit = (e) => {
       e.preventDefault();
       const items = $$('.lineRow', lines).map((r) => ({ product_id: $('.lineProd', r).value, quantity: $('.lineQty', r).value }));
       const label = $('#noLabel').files[0];
-      try {
+      busy(e.submitter, async () => { try {
         const o = await api('/api/client/orders', { method: 'POST', headers: H(), body: { order_number: $('#noNum').value, ship_to: $('#noShip').value, items } });
         if (label) {
           const form = new FormData(); form.append('label', label);
           await api(`/api/client/orders/${o.id}/label`, { method: 'POST', form, headers: H() });
         }
         toast(`Order ${o.order_number} created${label ? ' with its label' : ''}.`); closeModal(); loadOrders();
-      } catch (err) { toast(err.message); }
+      } catch (err) { fieldError($('#noNum'), err.message); } });
     };
   }
 
@@ -257,7 +261,7 @@
   }
   function renderNotifs() {
     const el = $('#notifs');
-    if (!notifs.length) { el.innerHTML = '<div class="empty">No notifications yet. You will be told here when an order is printed.</div>'; return; }
+    if (!notifs.length) { el.innerHTML = `<div class="empty">${icon('bell')}<strong>No notifications yet</strong><span>You will be told here the moment the warehouse prints one of your orders.</span></div>`; return; }
     el.innerHTML = notifs.map((n) => `<div class="notif ${n.read ? '' : 'unread'}"><div>${esc(n.message)}</div><time>${esc(fmtDate(n.created_at))}</time></div>`).join('');
   }
   async function markRead() {

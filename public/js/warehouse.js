@@ -1,5 +1,5 @@
 (() => {
-  const { $, $$, esc, toast, api, fmtDate, statusLabel, thumb } = G;
+  const { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, fmtDate, statusLabel, thumb } = G;
   const KEY = 'g3_wh_pass';
   let pass = localStorage.getItem(KEY) || '';
   let orders = [];
@@ -9,10 +9,12 @@
   $('#loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const p = $('#pass').value;
-    try {
-      await api('/api/auth/warehouse', { method: 'POST', body: { passcode: p } });
-      pass = p; localStorage.setItem(KEY, pass); enter();
-    } catch (err) { toast(err.message); }
+    await busy(e.submitter, async () => {
+      try {
+        await api('/api/auth/warehouse', { method: 'POST', body: { passcode: p } });
+        pass = p; localStorage.setItem(KEY, pass); enter();
+      } catch (err) { fieldError($('#pass'), err.message); }
+    });
   });
   $('#logout').addEventListener('click', () => { localStorage.removeItem(KEY); location.reload(); });
 
@@ -44,6 +46,7 @@
   }
 
   async function loadOrders() {
+    if (!orders.length) $('#orders').innerHTML = skeleton(3);
     try { orders = await api(`/api/wh/orders?${queryString()}`, { headers: H() }); }
     catch (err) { toast(err.message); return; }
     renderOrders();
@@ -61,22 +64,22 @@
 
   function renderOrders() {
     const el = $('#orders');
-    if (!orders.length) { el.innerHTML = '<div class="empty">Nothing in this queue.</div>'; return; }
+    if (!orders.length) { el.innerHTML = `<div class="empty">${icon('box')}<strong>Nothing in this queue</strong><span>Try another status or clear the filters. New orders appear here as clients add them.</span></div>`; return; }
     el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Client</th><th>Order</th><th>Ship to</th><th>Items</th><th>Status</th><th></th></tr></thead><tbody>${orders.map((o) => {
       const units = o.items.reduce((s, it) => s + it.quantity, 0);
       return `<tr>
         <td>${esc(o.client_name)}</td>
-        <td><strong>${esc(o.order_number)}</strong><div class="muted" style="font-size:12px">${esc(fmtDate(o.created_at))}</div></td>
+        <td><strong>${esc(o.order_number)}</strong><div class="cell-sub">${esc(fmtDate(o.created_at))}</div></td>
         <td>${esc(o.ship_to) || '<span class="muted">—</span>'}</td>
-        <td><div class="row">${o.items.slice(0, 4).map((it) => thumb(it.image, it.name)).join('')}${o.items.length > 4 ? `<span class="muted">+${o.items.length - 4}</span>` : ''}</div><div class="muted" style="font-size:12px">${o.items.length} line${o.items.length === 1 ? '' : 's'} · ${units} unit${units === 1 ? '' : 's'}</div></td>
-        <td><span class="status ${esc(o.status)}">${esc(statusLabel(o.status))}</span>${o.printed_at ? `<div class="muted" style="font-size:12px">${esc(fmtDate(o.printed_at))}</div>` : ''}</td>
+        <td><div class="row">${o.items.slice(0, 4).map((it) => thumb(it.image, it.name)).join('')}${o.items.length > 4 ? `<span class="muted">+${o.items.length - 4}</span>` : ''}</div><div class="cell-sub">${o.items.length} line${o.items.length === 1 ? '' : 's'} · ${units} unit${units === 1 ? '' : 's'}</div></td>
+        <td><span class="status ${esc(o.status)}">${esc(statusLabel(o.status))}</span>${o.printed_at ? `<div class="cell-sub">${esc(fmtDate(o.printed_at))}</div>` : ''}</td>
         <td style="white-space:nowrap">
-          <button class="btn sm pick" data-id="${o.id}">Pick list</button>
-          <button class="btn sm primary print" data-id="${o.id}" ${o.has_label ? '' : 'disabled title="Client has not uploaded a label yet"'}>${o.status === 'printed' ? 'Reprint' : 'Print label'}</button>
+          <button class="btn sm pick" data-id="${o.id}">${icon('box')} Pick list</button>
+          <button class="btn sm primary print" data-id="${o.id}" ${o.has_label ? '' : 'disabled title="Client has not uploaded a label yet"'}>${icon('print')} ${o.status === 'printed' ? 'Reprint' : 'Print label'}</button>
         </td>
       </tr>`; }).join('')}</tbody></table></div>`;
     $$('.pick', el).forEach((b) => b.addEventListener('click', () => openPick(b.dataset.id)));
-    $$('.print', el).forEach((b) => b.addEventListener('click', () => printLabel(b.dataset.id)));
+    $$('.print', el).forEach((b) => b.addEventListener('click', () => busy(b, () => printLabel(b.dataset.id))));
   }
 
   // Print flow: open the label in a print tab, mark the order printed, notify the client.
@@ -98,18 +101,20 @@
     const m = $('#modal');
     m.innerHTML = `
       <div class="row" style="justify-content:space-between">
-        <div><h2 style="margin:0">Pick list · ${esc(o.order_number)}</h2><div class="muted">${esc(o.client_name)} → ${esc(o.ship_to || 'no address')}</div></div>
-        <button class="btn sm" id="closeM">Close</button>
+        <div><h2 style="margin:0">Pick list · ${esc(o.order_number)}</h2><div class="muted">${esc(o.client_name)} ${icon('arrow')} ${esc(o.ship_to || 'no address')}</div></div>
+        <button class="btn sm icon-btn" id="closeM" type="button" aria-label="Close">${icon('x')}</button>
       </div>
       <hr class="sep">
+      <p class="muted small" style="margin:0 0 4px">Tick each line as you pick it.</p>
       <div class="stack">${o.items.map((it) => `
         <div class="pick-item">
+          <label class="pick-check"><input type="checkbox" class="picked" aria-label="Picked: ${esc(it.name)}"></label>
           ${thumb(it.image, it.name, 'lg')}
           <div style="flex:1;min-width:0">
             <h3 style="margin:0">${esc(it.name)}</h3>
             <div class="muted" style="font-size:13px">${esc(it.sku || 'no SKU')}${it.type ? ` · ${esc(it.type)}` : ''}</div>
             ${it.description ? `<div style="font-size:13px;margin-top:2px">${esc(it.description)}</div>` : ''}
-            <div style="margin-top:6px">${it.location ? `📍 <span class="loc">${esc(it.location)}</span>` : '<span class="muted">No location set</span>'}
+            <div style="margin-top:6px">${it.location ? `<span class="loc">${icon('pin')} ${esc(it.location)}</span>` : '<span class="muted">No location set</span>'}
               ${it.product_id ? `<button class="btn sm setloc" data-pid="${it.product_id}" data-cur="${esc(it.location || '')}" style="margin-left:8px">Set location</button>` : ''}</div>
           </div>
           <div class="qty" title="Quantity to pick">×${it.quantity}</div>
@@ -117,12 +122,13 @@
       </div>
       <hr class="sep">
       <div class="row" style="justify-content:flex-end">
-        ${o.has_label ? `<a class="btn" target="_blank" href="/api/wh/orders/${o.id}/label?pass=${encodeURIComponent(pass)}">View label</a>` : '<span class="muted">Waiting for client to upload a label</span>'}
-        <button class="btn primary" id="printM" ${o.has_label ? '' : 'disabled'}>Print label &amp; notify client</button>
+        ${o.has_label ? `<a class="btn" target="_blank" href="/api/wh/orders/${o.id}/label?pass=${encodeURIComponent(pass)}">${icon('file')} View label</a>` : '<span class="muted">Waiting for client to upload a label</span>'}
+        <button class="btn primary" id="printM" type="button" ${o.has_label ? '' : 'disabled'}>${icon('print')} Print label &amp; notify client</button>
       </div>`;
     $('#modalBg').classList.add('open');
     $('#closeM').onclick = closeModal;
     $('#printM').onclick = () => { closeModal(); printLabel(o.id); };
+    $$('.picked', m).forEach((cb) => cb.addEventListener('change', () => cb.closest('.pick-item').classList.toggle('done', cb.checked)));
     $$('.setloc', m).forEach((b) => b.addEventListener('click', async () => {
       const loc = prompt('Garage location for this product (e.g. Shelf A2):', b.dataset.cur || '');
       if (loc === null) return;
@@ -138,20 +144,22 @@
     let clients;
     try { clients = await api('/api/wh/clients', { headers: H() }); } catch (err) { toast(err.message); return; }
     const el = $('#clients');
-    if (!clients.length) { el.innerHTML = '<div class="empty">No clients yet.</div>'; return; }
+    if (!clients.length) { el.innerHTML = `<div class="empty">${icon('user')}<strong>No clients yet</strong><span>Create one on the left and share the access code.</span></div>`; return; }
     el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Access code</th><th>Orders</th></tr></thead><tbody>${clients.map((c) => `
-      <tr><td><strong>${esc(c.name)}</strong>${c.email ? `<div class="muted" style="font-size:12px">${esc(c.email)}</div>` : ''}</td>
+      <tr><td><strong>${esc(c.name)}</strong>${c.email ? `<div class="cell-sub">${esc(c.email)}</div>` : ''}</td>
       <td><span class="kbd">${esc(c.code)}</span></td><td>${c.orders}</td></tr>`).join('')}</tbody></table></div>
-      <p class="muted" style="font-size:13px;margin-bottom:0">Give each client their access code; they sign in at <span class="kbd">/client.html</span>.</p>`;
+      <p class="muted small" style="margin:12px 0 0">Give each client their access code; they sign in at <span class="kbd">/client.html</span>.</p>`;
   }
-  $('#clientForm').addEventListener('submit', async (e) => {
+  $('#clientForm').addEventListener('submit', (e) => {
     e.preventDefault();
-    try {
-      const c = await api('/api/wh/clients', { method: 'POST', headers: H(), body: { name: $('#cName').value, email: $('#cEmail').value } });
-      toast(`Client created. Access code: ${c.code}`, 6000);
-      $('#cName').value = ''; $('#cEmail').value = '';
-      loadClients();
-    } catch (err) { toast(err.message); }
+    busy(e.submitter, async () => {
+      try {
+        const c = await api('/api/wh/clients', { method: 'POST', headers: H(), body: { name: $('#cName').value, email: $('#cEmail').value } });
+        toast(`Client created. Access code: ${c.code}`, 6000);
+        $('#cName').value = ''; $('#cEmail').value = '';
+        loadClients();
+      } catch (err) { fieldError($('#cName'), err.message); }
+    });
   });
 
   // ---------- boot ----------
