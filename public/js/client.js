@@ -67,24 +67,37 @@
     orders = await api('/api/client/orders', { headers: H() });
     renderOrders();
   }
+  // Up to four item photos in a square mosaic; a 5th+ item becomes a "+N" cell.
+  function mosaic(items) {
+    const shown = items.slice(0, 4);
+    const cells = shown.map((it) => it.image
+      ? `<img class="mimg" src="${esc(it.image)}" alt="${esc(it.name)}" loading="lazy" onerror="this.outerHTML='<div class=&quot;mimg placeholder&quot;></div>'">`
+      : `<div class="mimg placeholder" title="${esc(it.name)}">${icon('image')}</div>`);
+    if (items.length > 4) cells[3] = `<div class="mimg more">+${items.length - 3}</div>`;
+    const title = items.map((i) => `${i.quantity}× ${i.name}`).join('\n');
+    return `<div class="mosaic n${Math.min(shown.length, 4)}" title="${esc(title)}">${cells.join('')}</div>`;
+  }
+
   function renderOrders() {
     const el = $('#orders');
     if (!orders.length) { el.innerHTML = `<div class="empty">${icon('box')}<strong>No orders yet</strong><span>Import an Excel sheet above, or create one by hand.</span><button class="btn primary sm" type="button" id="emptyNewOrder">${icon('plus')} Create order</button></div>`; const b = $('#emptyNewOrder'); if (b) b.onclick = openNewOrder; return; }
     const list = filterByDate(orders);
     if (!list.length) { el.innerHTML = `<div class="empty">${icon('calendar')}<strong>No orders in this period</strong><span>Try another date, or choose All.</span></div>`; return; }
-    el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Order</th><th>Ship to</th><th>Items</th><th>Status</th><th>Shipping label</th><th>Created</th><th><span class="sr-only"></span></th></tr></thead><tbody>${list.map((o) => `
-      <tr>
-        <td><strong>${esc(o.order_number)}</strong></td>
-        <td>${esc(o.ship_to) || '<span class="muted">—</span>'}</td>
-        <td><div class="row">${o.items.map((it) => `<span class="row" title="${esc(it.name)}">${thumb(it.image, it.name)}<span>×${it.quantity}</span></span>`).join('')}</div></td>
-        <td><span class="status ${esc(o.status)}">${esc(statusLabel(o.status))}</span>${o.printed_at ? `<div class="muted" style="font-size:12px">${esc(fmtDate(o.printed_at))}</div>` : ''}</td>
-        <td>
-          ${o.has_label ? `<a class="btn sm" target="_blank" href="/api/client/orders/${o.id}/label?code=${encodeURIComponent(code)}">${icon('file')} View label</a> ` : ''}
-          <label class="btn sm" style="margin:0;display:inline-flex">${icon('upload')} ${o.has_label ? 'Replace' : 'Upload label'}<input type="file" accept=".pdf,image/*" hidden data-order="${o.id}" class="labelInput"></label>
-        </td>
-        <td class="muted small">${esc(fmtDate(o.created_at))}</td>
-        <td>${canDelete(o) ? `<button class="btn sm icon-btn danger delOrder" type="button" data-id="${o.id}" data-num="${esc(o.order_number)}" aria-label="Delete order ${esc(o.order_number)}" title="Delete order">${icon('trash')}</button>` : `<span class="muted small" title="Printed orders cannot be deleted">${icon('check')}</span>`}</td>
-      </tr>`).join('')}</tbody></table></div>`;
+    el.innerHTML = `<div class="grid cols-4 order-grid">${list.map((o) => {
+      const units = o.items.reduce((s, it) => s + it.quantity, 0);
+      return `
+      <article class="order-card" aria-label="Order ${esc(o.order_number)}">
+        <div class="order-visual card">${mosaic(o.items)}</div>
+        <div class="order-status"><span class="status ${esc(o.status)}">${esc(statusLabel(o.status))}</span></div>
+        <h3 class="order-title" title="${esc(o.order_number)}">${esc(o.order_number)}</h3>
+        <p class="order-sub">${o.items.length} item${o.items.length === 1 ? '' : 's'} · ${units} unit${units === 1 ? '' : 's'}</p>
+        <p class="order-fine">${o.ship_to ? esc(o.ship_to) : 'No ship-to address yet'}<br>${esc(fmtDate(o.created_at))}${o.printed_at ? `<br>Printed ${esc(fmtDate(o.printed_at))}` : ''}</p>
+        <div class="order-actions">
+          <label class="btn ${o.has_label ? '' : 'primary'}" style="margin:0;display:inline-flex">${icon('upload')} ${o.has_label ? 'Replace label' : 'Upload label'}<input type="file" accept=".pdf,image/*" hidden data-order="${o.id}" class="labelInput"></label>
+          ${o.has_label ? `<a class="link" target="_blank" href="/api/client/orders/${o.id}/label?code=${encodeURIComponent(code)}">View label</a>` : ''}
+          ${canDelete(o) ? `<button class="link danger delOrder" type="button" data-id="${o.id}" data-num="${esc(o.order_number)}" aria-label="Delete order ${esc(o.order_number)}">Delete</button>` : ''}
+        </div>
+      </article>`; }).join('')}</div>`;
     $$('.delOrder', el).forEach((b) => b.addEventListener('click', async () => {
       if (!confirm(`Delete order ${b.dataset.num}? This removes its items and label and cannot be undone.`)) return;
       try { await busy(b, () => api(`/api/client/orders/${b.dataset.id}`, { method: 'DELETE', headers: H() })); toast(`Order ${b.dataset.num} deleted.`); orders = orders.filter((o) => o.id !== b.dataset.id); renderOrders(); }
