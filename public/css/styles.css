@@ -164,6 +164,11 @@ tbody tr { transition: background-color var(--dur) var(--ease); }
 tbody tr:hover { background: var(--surface-2); }
 tr:last-child td { border-bottom: 0; }
 .cell-sub { font-size: var(--fs-xs); color: var(--muted); margin-top: 2px; }
+/* list rows that wrap instead of scrolling (clients) */
+.client-row { display: flex; align-items: center; gap: var(--space-3) var(--space-4); flex-wrap: wrap; padding: var(--space-3) 0; border-bottom: 1px solid var(--line); }
+.client-row:last-child { border-bottom: 0; }
+.client-row .grow { flex: 1 1 160px; min-width: 0; }
+.client-row .meta { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 
 /* ---------- product tiles (centered, image-led like apple product cards) ---------- */
 .thumb { width: 56px; height: 56px; object-fit: cover; border-radius: var(--radius); background: var(--surface-2); flex: none; }

@@ -150,10 +150,13 @@
     if (clients.some((c) => c.id === cur)) sel.value = cur;
     const el = $('#clients');
     if (!clients.length) { el.innerHTML = `<div class="empty">${icon('user')}<strong>No clients yet</strong><span>Create one on the left and share the access code.</span></div>`; return; }
-    el.innerHTML = `<div class="table-wrap compact"><table><thead><tr><th>Name</th><th>Access code</th><th>Orders</th><th></th></tr></thead><tbody>${clients.map((c) => `
-      <tr><td><strong>${esc(c.name)}</strong>${c.email ? `<div class="cell-sub">${esc(c.email)}</div>` : ''}</td>
-      <td><span class="kbd">${esc(c.code)}</span></td><td>${c.orders}</td>
-      <td style="text-align:right"><button class="btn sm danger delClient" type="button" data-id="${esc(c.id)}" data-name="${esc(c.name)}" data-orders="${c.orders}">${icon('trash')} Delete</button></td></tr>`).join('')}</tbody></table></div>
+    el.innerHTML = `<div class="client-list">${clients.map((c) => `
+      <div class="client-row">
+        <div class="grow"><strong>${esc(c.name)}</strong>${c.email ? `<div class="cell-sub">${esc(c.email)}</div>` : ''}</div>
+        <div class="meta"><span class="muted small">Code</span> <span class="kbd">${esc(c.code)}</span></div>
+        <div class="meta"><span class="muted small">Orders</span> <strong>${c.orders}</strong></div>
+        <button class="btn sm danger delClient" type="button" data-id="${esc(c.id)}" data-name="${esc(c.name)}" data-orders="${c.orders}">${icon('trash')} Delete</button>
+      </div>`).join('')}</div>
       <p class="muted small" style="margin:12px 0 0">Give each client their access code; they sign in at <span class="kbd">/client.html</span>. Deleting a client removes all of their orders, products, labels and photos.</p>`;
     $$('.delClient', el).forEach((b) => b.addEventListener('click', async () => {
       const typed = prompt(`Delete client "${b.dataset.name}" and all ${b.dataset.orders} of their orders, products and labels? This cannot be undone.\n\nType the client name to confirm:`);
