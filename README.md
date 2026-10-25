@@ -183,6 +183,16 @@ What to expect on the free plan:
 The app reads `PORT` from the environment, so it also runs unchanged on
 Railway, Fly.io or any Node host.
 
+### Or publish it from your own PC with Cloudflare (free)
+
+If you want to run the server on your own laptop (where your real data lives)
+and reach it from anywhere, use a **Cloudflare Tunnel**. A quick tunnel gives a
+temporary link in one command; a named tunnel gives a stable address on your
+own domain (e.g. `app.zippackers.com`) with a valid certificate. Ready-to-run
+scripts and a step-by-step guide are in [`cloudflare/`](cloudflare/README.md).
+Cloudflare's serverless tiers (Pages, Workers) cannot run this app, because it
+needs a Node server and a persistent disk; the tunnel approach does.
+
 ## Brand
 
 The portals use the Zip Packers brand, taken from zippackers.com and the logo:

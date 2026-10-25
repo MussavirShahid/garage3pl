@@ -1,0 +1,28 @@
+# ---------------------------------------------------------------------------
+#  Zip Packers - named Cloudflare tunnel config (example)
+#
+#  Copy this to your cloudflared config folder as config.yml and fill in the
+#  two placeholders. On Windows that folder is:
+#      C:\Users\<you>\.cloudflared\
+#  On macOS/Linux:
+#      ~/.cloudflared/
+#
+#  A named tunnel gives you a STABLE address on your own domain (for example
+#  app.zippackers.com) with a valid Cloudflare TLS certificate, so the browser
+#  padlock is green and the URL never changes. See README.md for the full
+#  step-by-step.
+# ---------------------------------------------------------------------------
+
+# The tunnel's UUID, printed by `cloudflared tunnel create zippackers`.
+tunnel: REPLACE_WITH_TUNNEL_UUID
+
+# The credentials file written by that same command. Use the full path.
+# Windows example: C:\Users\you\.cloudflared\REPLACE_WITH_TUNNEL_UUID.json
+credentials-file: REPLACE_WITH_PATH_TO_CREDENTIALS.json
+
+ingress:
+  # Public hostname -> your local Zip Packers server.
+  - hostname: app.zippackers.com
+    service: http://localhost:4000
+  # Everything else returns 404. This catch-all is required and must be last.
+  - service: http_status:404
