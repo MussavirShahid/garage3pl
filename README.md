@@ -1,4 +1,4 @@
-# Garage 3PL
+# Zip Packers
 
 A small, self-hosted fulfillment app for a home-garage third-party logistics
 operation. Two portals, one server, no database to install.
@@ -123,6 +123,27 @@ What to expect on the free plan:
 
 The app reads `PORT` from the environment, so it also runs unchanged on
 Railway, Fly.io or any Node host.
+
+## Brand
+
+The portals use the Zip Packers brand, taken from zippackers.com and the logo:
+
+| Role | Color | Where it appears |
+|---|---|---|
+| Navy (primary) | `#124265` | buttons, links, "ready" status |
+| Gold (highlight) | `#FFBB00` | bar under the top bar, active tab, notification edge |
+| Steel blue | `#5E7FA3` | portal name pill, secondary accents |
+| Text | `#333333` | body text |
+| Muted text | `#7A7A7A` | hints and labels |
+| Light background | `#F7F7F7` | page background |
+
+Fonts: Roboto for text and Roboto Slab for headings, loaded from Google Fonts
+with system fallbacks, so the app still works offline.
+
+Logo: drop the logo in `public/brand/logo.png` (and optionally a 64×64
+`public/brand/favicon.png`). The top bar shows it automatically; without the
+file it falls back to a gold dot. The CSS variables live at the top of
+`public/css/styles.css` if you ever want to retune them.
 
 ## Where data lives
 

@@ -465,7 +465,7 @@ app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
-  console.log(`\n  Garage 3PL running:  http://localhost:${PORT}`);
+  console.log(`\n  Zip Packers running:  http://localhost:${PORT}`);
   console.log(`  Warehouse passcode:  ${db.settings.warehousePass}`);
   const demo = db.clients.find((c) => c.name === 'Demo Client');
   if (demo) console.log(`  Demo client code:    ${demo.code}`);
