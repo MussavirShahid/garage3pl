@@ -1,5 +1,5 @@
 (() => {
-  const { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, fmtDate, statusLabel, thumb } = G;
+  const { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, mosaic, fmtDate, statusLabel, thumb } = G;
   const KEY = 'g3_client_code';
   let code = localStorage.getItem(KEY) || '';
   let orders = [], products = [], notifs = [];
@@ -67,17 +67,6 @@
     orders = await api('/api/client/orders', { headers: H() });
     renderOrders();
   }
-  // Up to four item photos in a square mosaic; a 5th+ item becomes a "+N" cell.
-  function mosaic(items) {
-    const shown = items.slice(0, 4);
-    const cells = shown.map((it) => it.image
-      ? `<img class="mimg" src="${esc(it.image)}" alt="${esc(it.name)}" loading="lazy" onerror="this.outerHTML='<div class=&quot;mimg placeholder&quot;></div>'">`
-      : `<div class="mimg placeholder" title="${esc(it.name)}">${icon('image')}</div>`);
-    if (items.length > 4) cells[3] = `<div class="mimg more">+${items.length - 3}</div>`;
-    const title = items.map((i) => `${i.quantity}× ${i.name}`).join('\n');
-    return `<div class="mosaic n${Math.min(shown.length, 4)}" title="${esc(title)}">${cells.join('')}</div>`;
-  }
-
   function renderOrders() {
     const el = $('#orders');
     if (!orders.length) { el.innerHTML = `<div class="empty">${icon('box')}<strong>No orders yet</strong><span>Import an Excel sheet above, or create one by hand.</span><button class="btn primary sm" type="button" id="emptyNewOrder">${icon('plus')} Create order</button></div>`; const b = $('#emptyNewOrder'); if (b) b.onclick = openNewOrder; return; }

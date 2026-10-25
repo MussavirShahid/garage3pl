@@ -1,5 +1,5 @@
 (() => {
-  const { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, fmtDate, statusLabel, thumb } = G;
+  const { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, mosaic, fmtDate, statusLabel, thumb } = G;
   const KEY = 'g3_wh_pass';
   let pass = localStorage.getItem(KEY) || '';
   let orders = [];
@@ -66,19 +66,20 @@
   function renderOrders() {
     const el = $('#orders');
     if (!orders.length) { el.innerHTML = `<div class="empty">${icon('box')}<strong>Nothing in this queue</strong><span>Try another status or clear the filters. New orders appear here as clients add them.</span></div>`; return; }
-    el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Client</th><th>Order</th><th>Ship to</th><th>Items</th><th>Status</th><th></th></tr></thead><tbody>${orders.map((o) => {
+    el.innerHTML = `<div class="grid cols-4 order-grid">${orders.map((o) => {
       const units = o.items.reduce((s, it) => s + it.quantity, 0);
-      return `<tr>
-        <td>${esc(o.client_name)}</td>
-        <td><strong>${esc(o.order_number)}</strong><div class="cell-sub">${esc(fmtDate(o.created_at))}</div></td>
-        <td>${esc(o.ship_to) || '<span class="muted">—</span>'}</td>
-        <td><div class="row">${o.items.slice(0, 4).map((it) => thumb(it.image, it.name)).join('')}${o.items.length > 4 ? `<span class="muted">+${o.items.length - 4}</span>` : ''}</div><div class="cell-sub">${o.items.length} line${o.items.length === 1 ? '' : 's'} · ${units} unit${units === 1 ? '' : 's'}</div></td>
-        <td><span class="status ${esc(o.status)}">${esc(statusLabel(o.status))}</span>${o.printed_at ? `<div class="cell-sub">${esc(fmtDate(o.printed_at))}</div>` : ''}</td>
-        <td style="white-space:nowrap">
-          <button class="btn sm pick" data-id="${o.id}">${icon('box')} Pick list</button>
-          <button class="btn sm primary print" data-id="${o.id}" ${o.has_label ? '' : 'disabled title="Client has not uploaded a label yet"'}>${icon('print')} ${o.status === 'printed' ? 'Reprint' : 'Print label'}</button>
-        </td>
-      </tr>`; }).join('')}</tbody></table></div>`;
+      return `
+      <article class="order-card" aria-label="Order ${esc(o.order_number)} for ${esc(o.client_name)}">
+        <div class="order-visual card">${mosaic(o.items)}</div>
+        <div class="order-status"><span class="status ${esc(o.status)}">${esc(statusLabel(o.status))}</span></div>
+        <h3 class="order-title" title="${esc(o.order_number)}">${esc(o.order_number)}</h3>
+        <p class="order-sub">${esc(o.client_name)}</p>
+        <p class="order-fine">${o.items.length} line${o.items.length === 1 ? '' : 's'} · ${units} unit${units === 1 ? '' : 's'}<br>${o.ship_to ? esc(o.ship_to) : 'No ship-to address'}<br>${esc(fmtDate(o.created_at))}${o.printed_at ? `<br>Printed ${esc(fmtDate(o.printed_at))}` : ''}</p>
+        <div class="order-actions">
+          <button class="btn primary print" type="button" data-id="${o.id}" ${o.has_label ? '' : 'disabled title="Client has not uploaded a label yet"'}>${icon('print')} ${o.status === 'printed' ? 'Reprint' : 'Print label'}</button>
+          <button class="link pick" type="button" data-id="${o.id}">Pick list</button>
+        </div>
+      </article>`; }).join('')}</div>`;
     $$('.pick', el).forEach((b) => b.addEventListener('click', () => openPick(b.dataset.id)));
     $$('.print', el).forEach((b) => b.addEventListener('click', () => busy(b, () => printLabel(b.dataset.id))));
   }

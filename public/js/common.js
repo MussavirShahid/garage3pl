@@ -80,6 +80,17 @@ window.G = (() => {
       '<span class="muted small" role="status">Loading…</span>';
   }
 
+  // Up to four item photos in a square mosaic; a 5th+ item becomes a "+N" cell.
+  function mosaic(items) {
+    const shown = items.slice(0, 4);
+    const cells = shown.map((it) => it.image
+      ? `<img class="mimg" src="${esc(it.image)}" alt="${esc(it.name)}" loading="lazy" onerror="this.outerHTML='<div class=&quot;mimg placeholder&quot;></div>'">`
+      : `<div class="mimg placeholder" title="${esc(it.name)}">${icon('image')}</div>`);
+    if (items.length > 4) cells[3] = `<div class="mimg more">+${items.length - 3}</div>`;
+    const title = items.map((i) => `${i.quantity}× ${i.name}`).join('\n');
+    return `<div class="mosaic n${Math.min(shown.length, 4)}" title="${esc(title)}">${cells.join('')}</div>`;
+  }
+
   function fmtDate(iso) {
     if (!iso) return '';
     return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
@@ -94,5 +105,5 @@ window.G = (() => {
     return `<div class="thumb placeholder ${cls}">no image</div>`;
   }
 
-  return { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, fmtDate, statusLabel, thumb };
+  return { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, mosaic, fmtDate, statusLabel, thumb };
 })();

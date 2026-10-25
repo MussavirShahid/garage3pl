@@ -109,7 +109,8 @@ p { margin: 0 0 var(--space-3); }
 .order-fine { font-size: 13px; color: var(--muted); margin: 0; line-height: 1.45; }
 .order-actions { display: flex; gap: var(--space-2) var(--space-3); flex-wrap: wrap; justify-content: center; align-items: center; margin-top: var(--space-2); }
 .order-actions .link { font-size: var(--fs-sm); min-height: 36px; }
-.order-actions .link.danger { color: var(--danger); background: none; border: 0; font: inherit; font-size: var(--fs-sm); font-weight: 500; cursor: pointer; }
+button.link { background: none; border: 0; cursor: pointer; font: inherit; font-weight: 500; color: var(--accent); }
+.order-actions .link.danger { color: var(--danger); font-size: var(--fs-sm); }
 .mosaic { display: grid; gap: 4px; width: 100%; max-width: 200px; aspect-ratio: 1; border-radius: var(--radius); overflow: hidden; background: var(--surface-2); align-self: center; }
 .mosaic.n1 { grid-template-columns: 1fr; }
 .mosaic.n2 { grid-template-columns: 1fr 1fr; }
