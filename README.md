@@ -36,6 +36,41 @@ PDF/image as a label on an order, then sign in to the warehouse, open the pick
 list and click **Print label**. Switch back to the client tab: the order shows
 **Printed** and a notification appears.
 
+## Working from another computer
+
+GitHub holds the code only. Your live data (`data/store.json`, `uploads/labels`,
+`uploads/products`) is excluded on purpose, so a fresh clone starts empty with
+the demo client.
+
+**Option A — same OneDrive account (keeps your data):** the project folder lives
+in OneDrive, so once the other computer is signed in to the same account the
+whole folder, data included, appears at the same path. Then:
+
+```powershell
+cd "$env:OneDriveCommercial\Documents\Claude Projects\ZipPacker 3PL Software\garage3pl"
+npm install
+node src/server.js
+```
+
+If `node_modules` is still syncing or looks incomplete, delete it and run
+`npm install` again.
+
+**Option B — clone from GitHub (code only):**
+
+```powershell
+winget install --id OpenJS.NodeJS.LTS --exact
+winget install --id Git.Git --exact
+git clone https://github.com/MussavirShahid/garage3pl.git
+cd garage3pl
+npm install
+node src/server.js
+```
+
+To carry your data across, copy the `data/` and `uploads/` folders from the
+old machine into the clone before starting the server. Either way, commit and
+push from whichever machine you edited on, and `git pull` on the other before
+continuing.
+
 ## Excel format
 
 Any `.xlsx`, `.xls` or `.csv`. The first row is the header. Column names are
