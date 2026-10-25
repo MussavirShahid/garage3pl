@@ -88,7 +88,7 @@
   async function printLabel(id) {
     const o = orders.find((x) => x.id === id);
     if (!o || !o.has_label) { toast('No label on file for this order.'); return; }
-    const w = window.open(`/api/wh/orders/${id}/label?pass=${encodeURIComponent(pass)}`, '_blank');
+    const w = window.open(`/api/wh/orders/${id}/print-label?pass=${encodeURIComponent(pass)}`, '_blank');
     if (w) { try { w.addEventListener('load', () => setTimeout(() => w.print(), 400)); } catch { /* cross-origin pdf viewers ignore this; user prints from the tab */ } }
     try {
       await api(`/api/wh/orders/${id}/print`, { method: 'POST', headers: H() });
@@ -124,7 +124,7 @@
       </div>
       <hr class="sep">
       <div class="row" style="justify-content:flex-end">
-        ${o.has_label ? `<a class="btn" target="_blank" href="/api/wh/orders/${o.id}/label?pass=${encodeURIComponent(pass)}">${icon('file')} View label</a>` : '<span class="muted">Waiting for client to upload a label</span>'}
+        ${o.has_label ? `<a class="btn" target="_blank" href="/api/wh/orders/${o.id}/print-label?pass=${encodeURIComponent(pass)}">${icon('file')} View label</a>` : '<span class="muted">Waiting for client to upload a label</span>'}
         <button class="btn primary" id="printM" type="button" ${o.has_label ? '' : 'disabled'}>${icon('print')} Print label &amp; notify client</button>
       </div>`;
     $('#modalBg').classList.add('open');

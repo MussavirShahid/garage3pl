@@ -2,7 +2,8 @@ import express from 'express';
 import multer from 'multer';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, extname } from 'node:path';
-import { existsSync, mkdirSync, createReadStream, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, createReadStream, unlinkSync, readFileSync } from 'node:fs';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { randomUUID } from 'node:crypto';
 
 import { db } from './db.js';
@@ -496,6 +497,69 @@ app.get('/api/wh/orders/:id/label', warehouseAuth, (req, res) => {
 });
 app.get('/api/client/orders/:id/label', clientAuth, (req, res) => {
   streamLabel(db.orders.find((x) => x.id === req.params.id && x.client_id === req.client.id), res);
+});
+
+// ---------- printable label: original label + the order's contents at the bottom ----------
+// The stored label is never modified; this builds a fresh PDF each time it is printed.
+// LABEL_FOOTER_OFFSET_IN (default 0.35) is how far above the bottom edge the text sits.
+async function stampedLabel(order) {
+  const full = join(UP_LABELS, order.label.filename);
+  const bytes = readFileSync(full);
+  const mime = (order.label.mime || '').toLowerCase();
+  const isPdf = mime === 'application/pdf' || order.label.filename.toLowerCase().endsWith('.pdf');
+  let pdf;
+  if (isPdf) {
+    pdf = await PDFDocument.load(bytes, { ignoreEncryption: true });
+  } else {
+    // Image label: put it on a 4in-wide page with room beneath for the contents.
+    pdf = await PDFDocument.create();
+    const img = mime.includes('png') ? await pdf.embedPng(bytes) : await pdf.embedJpg(bytes);
+    const w = 288; // 4 in
+    const h = (img.height / img.width) * w;
+    const page = pdf.addPage([w, Math.max(h + 72, 432)]); // at least 4x6 in
+    page.drawImage(img, { x: 0, y: page.getHeight() - h, width: w, height: h });
+  }
+  const page = pdf.getPage(0);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const regular = await pdf.embedFont(StandardFonts.Helvetica);
+  const { width } = page.getSize();
+  const offset = Number(process.env.LABEL_FOOTER_OFFSET_IN || 0.35) * 72;
+  const margin = 0.3 * 72;
+  const size = order.items.length > 4 ? 9 : 11;
+  const lineHeight = size + 3;
+  const maxWidth = width - 2 * margin;
+  // Wrap each "Name ×qty" line to the label width.
+  const lines = [];
+  for (const it of order.items) {
+    const text = `${it.name}  ×${it.quantity}`;
+    let cur = '';
+    for (const word of text.split(' ')) {
+      const next = cur ? `${cur} ${word}` : word;
+      if (cur && bold.widthOfTextAtSize(next, size) > maxWidth) { lines.push(cur); cur = word; } else { cur = next; }
+    }
+    if (cur) lines.push(cur);
+  }
+  let y = offset;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    page.drawText(lines[i], { x: margin, y, size, font: bold, color: rgb(0, 0, 0) });
+    y += lineHeight;
+  }
+  page.drawText(`CONTENTS · ORDER ${order.order_number}`, { x: margin, y: y + 1, size: 7, font: regular, color: rgb(0.3, 0.3, 0.3) });
+  return pdf.save();
+}
+
+app.get('/api/wh/orders/:id/print-label', warehouseAuth, async (req, res) => {
+  const o = db.orders.find((x) => x.id === req.params.id);
+  if (!o || !o.label) { res.status(404).send('No label on file.'); return; }
+  try {
+    const out = await stampedLabel(o);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="label-${o.order_number}.pdf"`);
+    res.send(Buffer.from(out));
+  } catch (err) {
+    console.warn(`[label] could not stamp label for ${o.order_number}, serving the original:`, err.message);
+    streamLabel(o, res);
+  }
 });
 
 // ---------- misc ----------

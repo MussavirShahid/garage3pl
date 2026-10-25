@@ -77,6 +77,19 @@ The order queue can be filtered by status, by client, by item type (from the
 products' type field), and by a date range, and sorted newest or oldest first.
 Dates are the local calendar day, matching what the portals display.
 
+## Printed labels include the order contents
+
+When the warehouse clicks **Print label**, the app does not print the uploaded
+file as-is. It builds a fresh PDF on the fly: the client's label, plus a small
+**CONTENTS** block at the bottom listing every product and quantity in the
+order (for example `Nintendo Switch OLED White ×1`). Clients no longer need to
+type that onto the label themselves. The stored label is never modified; the
+client's "View label" still shows the original.
+
+Image labels (PNG/JPG) are placed on a 4×6 in page with the contents beneath.
+If a carrier's layout leaves the empty space higher up, move the text with
+`LABEL_FOOTER_OFFSET_IN` (inches from the bottom edge, default `0.35`).
+
 ## Deleting a client
 
 On the warehouse Clients tab, **Delete** removes a client together with all of
