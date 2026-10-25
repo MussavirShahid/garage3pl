@@ -3,7 +3,7 @@ import multer from 'multer';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, extname } from 'node:path';
 import { existsSync, mkdirSync, createReadStream, unlinkSync, readFileSync } from 'node:fs';
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb, degrees } from 'pdf-lib';
 import { randomUUID } from 'node:crypto';
 
 import { db } from './db.js';
@@ -522,12 +522,28 @@ async function stampedLabel(order) {
   const page = pdf.getPage(0);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
-  const { width } = page.getSize();
+  // Many carrier labels (FedEx especially) carry a /Rotate flag or are laid out
+  // landscape; UPS labels usually don't. pdf-lib draws in the UNROTATED page
+  // space, so we place the contents in the label's *displayed* orientation and
+  // then rotate the text to match, instead of drawing against the raw bottom edge.
+  const rot = (((page.getRotation().angle || 0) % 360) + 360) % 360; // 0 | 90 | 180 | 270
+  const { width: pw, height: ph } = page.getSize();
+  const dispW = rot === 90 || rot === 270 ? ph : pw; // width of the label as shown
+  // Map a point given in displayed coords (origin at the displayed bottom-left,
+  // x to the right, y up) to raw page coords, inverting the viewer's rotation.
+  const toPage = (dx, dy) => {
+    switch (rot) {
+      case 90: return { x: pw - dy, y: dx };
+      case 180: return { x: pw - dx, y: ph - dy };
+      case 270: return { x: dy, y: ph - dx };
+      default: return { x: dx, y: dy };
+    }
+  };
   const offset = Number(process.env.LABEL_FOOTER_OFFSET_IN || 0.35) * 72;
   const margin = 0.3 * 72;
   const size = order.items.length > 4 ? 9 : 11;
   const lineHeight = size + 3;
-  const maxWidth = width - 2 * margin;
+  const maxWidth = dispW - 2 * margin;
   // Wrap each "Name ×qty" line to the label width.
   const lines = [];
   for (const it of order.items) {
@@ -539,12 +555,14 @@ async function stampedLabel(order) {
     }
     if (cur) lines.push(cur);
   }
-  let y = offset;
+  let dy = offset;
   for (let i = lines.length - 1; i >= 0; i--) {
-    page.drawText(lines[i], { x: margin, y, size, font: bold, color: rgb(0, 0, 0) });
-    y += lineHeight;
+    const p = toPage(margin, dy);
+    page.drawText(lines[i], { x: p.x, y: p.y, size, font: bold, rotate: degrees(rot), color: rgb(0, 0, 0) });
+    dy += lineHeight;
   }
-  page.drawText(`CONTENTS · ORDER ${order.order_number}`, { x: margin, y: y + 1, size: 7, font: regular, color: rgb(0.3, 0.3, 0.3) });
+  const h = toPage(margin, dy + 1);
+  page.drawText(`CONTENTS · ORDER ${order.order_number}`, { x: h.x, y: h.y, size: 7, font: regular, rotate: degrees(rot), color: rgb(0.3, 0.3, 0.3) });
   return pdf.save();
 }
 
