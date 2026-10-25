@@ -2,7 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, extname } from 'node:path';
-import { existsSync, mkdirSync, createReadStream } from 'node:fs';
+import { existsSync, mkdirSync, createReadStream, unlinkSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 import { db } from './db.js';
@@ -91,6 +91,19 @@ function serializeOrder(order, { includeClient = false } = {}) {
     out.client_name = c?.name || 'Unknown';
   }
   return out;
+}
+
+// Remove an order's label file from disk (best effort).
+function removeLabelFile(order) {
+  if (!order || !order.label) return;
+  const full = join(UP_LABELS, order.label.filename);
+  try { if (existsSync(full)) unlinkSync(full); } catch { /* best effort */ }
+}
+// Remove an uploaded product photo from disk (external URLs are left alone).
+function removeProductImage(product) {
+  if (!product || !product.image || !product.image.startsWith('/files/products/')) return;
+  const full = join(UP_PRODUCTS, product.image.replace('/files/products/', ''));
+  try { if (existsSync(full)) unlinkSync(full); } catch { /* best effort */ }
 }
 
 // Kick off best-effort image lookups for products missing an image. Non-blocking.
@@ -362,6 +375,20 @@ app.post('/api/client/orders/:id/label', clientAuth, labelUpload.single('label')
   res.json(serializeOrder(o));
 });
 
+// delete an order: allowed only until the warehouse has printed it
+app.delete('/api/client/orders/:id', clientAuth, (req, res) => {
+  const i = db.orders.findIndex((x) => x.id === req.params.id && x.client_id === req.client.id);
+  if (i === -1) return res.status(404).json({ error: 'Order not found.' });
+  const o = db.orders[i];
+  if (o.status === 'printed' || o.status === 'shipped') {
+    return res.status(409).json({ error: `Order ${o.order_number} has already been printed and can no longer be deleted. Contact the warehouse.` });
+  }
+  removeLabelFile(o);
+  db.orders.splice(i, 1);
+  db.save();
+  res.json({ ok: true });
+});
+
 // ================= WAREHOUSE API =================
 app.get('/api/wh/clients', warehouseAuth, (req, res) => {
   res.json(db.clients.map((c) => ({
@@ -380,11 +407,29 @@ app.post('/api/wh/clients', warehouseAuth, (req, res) => {
   res.json(client);
 });
 
+// delete a client and everything that belongs to them (orders, products, labels, photos, notifications)
+app.delete('/api/wh/clients/:id', warehouseAuth, (req, res) => {
+  const i = db.clients.findIndex((c) => c.id === req.params.id);
+  if (i === -1) return res.status(404).json({ error: 'Client not found.' });
+  const id = db.clients[i].id;
+  const state = db._state();
+  const gone = { orders: 0, products: 0 };
+  for (const o of state.orders) if (o.client_id === id) { removeLabelFile(o); gone.orders++; }
+  for (const p of state.products) if (p.client_id === id) { removeProductImage(p); gone.products++; }
+  state.orders = state.orders.filter((o) => o.client_id !== id);
+  state.products = state.products.filter((p) => p.client_id !== id);
+  state.notifications = state.notifications.filter((n) => n.client_id !== id);
+  state.clients.splice(i, 1);
+  db.save();
+  res.json({ ok: true, removed: gone });
+});
+
 // Queue with filters: status, date range (YYYY-MM-DD), item type; sort newest|oldest.
 app.get('/api/wh/orders', warehouseAuth, (req, res) => {
-  const { status, from, to, type, sort } = req.query;
+  const { status, from, to, type, sort, client } = req.query;
   let orders = db.orders.slice();
   if (status && status !== 'all') orders = orders.filter((o) => o.status === status);
+  if (client) orders = orders.filter((o) => o.client_id === client);
   // Compare on the server's local calendar day, matching the dates people see in the UI.
   if (from) orders = orders.filter((o) => localDay(o.created_at) >= from);
   if (to) orders = orders.filter((o) => localDay(o.created_at) <= to);

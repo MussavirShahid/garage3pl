@@ -3,6 +3,7 @@
   const KEY = 'g3_client_code';
   let code = localStorage.getItem(KEY) || '';
   let orders = [], products = [], notifs = [];
+  let dateRange = 'all'; // all | today | yesterday | range
   const H = () => ({ 'x-client-code': code });
 
   // ---------- auth ----------
@@ -37,6 +38,29 @@
     await Promise.all([loadOrders(), loadProducts(), loadNotifs()]);
   }
 
+  // ---------- orders: date filter ----------
+  const localDay = (d) => { d = new Date(d); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  function filterByDate(list) {
+    const today = localDay(new Date());
+    const y = new Date(); y.setDate(y.getDate() - 1); const yesterday = localDay(y);
+    if (dateRange === 'today') return list.filter((o) => localDay(o.created_at) === today);
+    if (dateRange === 'yesterday') return list.filter((o) => localDay(o.created_at) === yesterday);
+    if (dateRange === 'range') {
+      const from = $('#oFrom').value, to = $('#oTo').value;
+      return list.filter((o) => { const d = localDay(o.created_at); return (!from || d >= from) && (!to || d <= to); });
+    }
+    return list;
+  }
+  $$('.segbtn[data-range]').forEach((b) => b.addEventListener('click', () => {
+    dateRange = b.dataset.range;
+    $$('.segbtn[data-range]').forEach((x) => { x.classList.toggle('active', x === b); x.setAttribute('aria-pressed', x === b); });
+    $('#rangeInputs').hidden = dateRange !== 'range';
+    renderOrders();
+  }));
+  $('#oFrom').addEventListener('change', renderOrders);
+  $('#oTo').addEventListener('change', renderOrders);
+  const canDelete = (o) => o.status === 'new' || o.status === 'label_ready';
+
   // ---------- orders ----------
   async function loadOrders() {
     if (!orders.length) $('#orders').innerHTML = skeleton(3);
@@ -46,7 +70,9 @@
   function renderOrders() {
     const el = $('#orders');
     if (!orders.length) { el.innerHTML = `<div class="empty">${icon('box')}<strong>No orders yet</strong><span>Import an Excel sheet above, or create one by hand.</span><button class="btn primary sm" type="button" id="emptyNewOrder">${icon('plus')} Create order</button></div>`; const b = $('#emptyNewOrder'); if (b) b.onclick = openNewOrder; return; }
-    el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Order</th><th>Ship to</th><th>Items</th><th>Status</th><th>Shipping label</th><th>Created</th></tr></thead><tbody>${orders.map((o) => `
+    const list = filterByDate(orders);
+    if (!list.length) { el.innerHTML = `<div class="empty">${icon('calendar')}<strong>No orders in this period</strong><span>Try another date, or choose All.</span></div>`; return; }
+    el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Order</th><th>Ship to</th><th>Items</th><th>Status</th><th>Shipping label</th><th>Created</th><th><span class="sr-only"></span></th></tr></thead><tbody>${list.map((o) => `
       <tr>
         <td><strong>${esc(o.order_number)}</strong></td>
         <td>${esc(o.ship_to) || '<span class="muted">—</span>'}</td>
@@ -57,7 +83,13 @@
           <label class="btn sm" style="margin:0;display:inline-flex">${icon('upload')} ${o.has_label ? 'Replace' : 'Upload label'}<input type="file" accept=".pdf,image/*" hidden data-order="${o.id}" class="labelInput"></label>
         </td>
         <td class="muted small">${esc(fmtDate(o.created_at))}</td>
+        <td>${canDelete(o) ? `<button class="btn sm icon-btn danger delOrder" type="button" data-id="${o.id}" data-num="${esc(o.order_number)}" aria-label="Delete order ${esc(o.order_number)}" title="Delete order">${icon('trash')}</button>` : `<span class="muted small" title="Printed orders cannot be deleted">${icon('check')}</span>`}</td>
       </tr>`).join('')}</tbody></table></div>`;
+    $$('.delOrder', el).forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm(`Delete order ${b.dataset.num}? This removes its items and label and cannot be undone.`)) return;
+      try { await busy(b, () => api(`/api/client/orders/${b.dataset.id}`, { method: 'DELETE', headers: H() })); toast(`Order ${b.dataset.num} deleted.`); orders = orders.filter((o) => o.id !== b.dataset.id); renderOrders(); }
+      catch (err) { toast(err.message, 6000); loadOrders(); }
+    }));
     $$('.labelInput', el).forEach((inp) => inp.addEventListener('change', async () => {
       if (!inp.files[0]) return;
       const form = new FormData(); form.append('label', inp.files[0]);

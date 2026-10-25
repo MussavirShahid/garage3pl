@@ -31,7 +31,7 @@
   }));
 
   // ---------- orders ----------
-  for (const id of ['statusFilter', 'typeFilter', 'fromDate', 'toDate', 'sortOrder']) $('#' + id).addEventListener('change', loadOrders);
+  for (const id of ['statusFilter', 'clientFilter', 'typeFilter', 'fromDate', 'toDate', 'sortOrder']) $('#' + id).addEventListener('change', loadOrders);
   $('#refresh').addEventListener('click', () => { loadTypes(); loadOrders(); });
   $('#clearDates').addEventListener('click', () => { $('#fromDate').value = ''; $('#toDate').value = ''; loadOrders(); });
 
@@ -40,6 +40,7 @@
     q.set('status', $('#statusFilter').value);
     q.set('sort', $('#sortOrder').value);
     if ($('#typeFilter').value) q.set('type', $('#typeFilter').value);
+    if ($('#clientFilter').value) q.set('client', $('#clientFilter').value);
     if ($('#fromDate').value) q.set('from', $('#fromDate').value);
     if ($('#toDate').value) q.set('to', $('#toDate').value);
     return q.toString();
@@ -143,12 +144,27 @@
   async function loadClients() {
     let clients;
     try { clients = await api('/api/wh/clients', { headers: H() }); } catch (err) { toast(err.message); return; }
+    // keep the queue's client filter in sync
+    const sel = $('#clientFilter'); const cur = sel.value;
+    sel.innerHTML = '<option value="">All clients</option>' + clients.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+    if (clients.some((c) => c.id === cur)) sel.value = cur;
     const el = $('#clients');
     if (!clients.length) { el.innerHTML = `<div class="empty">${icon('user')}<strong>No clients yet</strong><span>Create one on the left and share the access code.</span></div>`; return; }
-    el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Access code</th><th>Orders</th></tr></thead><tbody>${clients.map((c) => `
+    el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Access code</th><th>Orders</th><th></th></tr></thead><tbody>${clients.map((c) => `
       <tr><td><strong>${esc(c.name)}</strong>${c.email ? `<div class="cell-sub">${esc(c.email)}</div>` : ''}</td>
-      <td><span class="kbd">${esc(c.code)}</span></td><td>${c.orders}</td></tr>`).join('')}</tbody></table></div>
-      <p class="muted small" style="margin:12px 0 0">Give each client their access code; they sign in at <span class="kbd">/client.html</span>.</p>`;
+      <td><span class="kbd">${esc(c.code)}</span></td><td>${c.orders}</td>
+      <td style="text-align:right"><button class="btn sm danger delClient" type="button" data-id="${esc(c.id)}" data-name="${esc(c.name)}" data-orders="${c.orders}">${icon('trash')} Delete</button></td></tr>`).join('')}</tbody></table></div>
+      <p class="muted small" style="margin:12px 0 0">Give each client their access code; they sign in at <span class="kbd">/client.html</span>. Deleting a client removes all of their orders, products, labels and photos.</p>`;
+    $$('.delClient', el).forEach((b) => b.addEventListener('click', async () => {
+      const typed = prompt(`Delete client "${b.dataset.name}" and all ${b.dataset.orders} of their orders, products and labels? This cannot be undone.\n\nType the client name to confirm:`);
+      if (typed === null) return;
+      if (typed.trim().toLowerCase() !== b.dataset.name.trim().toLowerCase()) { toast('Name did not match. Nothing was deleted.', 5000); return; }
+      try {
+        const r = await busy(b, () => api(`/api/wh/clients/${b.dataset.id}`, { method: 'DELETE', headers: H() }));
+        toast(`Deleted ${b.dataset.name} (${r.removed.orders} orders, ${r.removed.products} products).`, 6000);
+        loadClients(); loadTypes(); loadOrders();
+      } catch (err) { toast(err.message, 6000); }
+    }));
   }
   $('#clientForm').addEventListener('submit', (e) => {
     e.preventDefault();

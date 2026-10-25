@@ -66,12 +66,23 @@ No spreadsheet needed:
 - **Orders tab → + Create order**: pick products and quantities, enter the
   ship-to, and attach the shipping label in the same step or later from the
   orders table.
+- **Delete an order**: the trash button on an order removes it, but only while
+  it is still awaiting a label or ready to print. Once the warehouse has printed
+  it, the button disappears and the server refuses the deletion.
+- **Filter orders by date**: All / Today / Yesterday, or pick a date range.
 
 ## Warehouse queue filters
 
-The order queue can be filtered by status, by item type (from the products'
-type field), and by a date range, and sorted newest or oldest first. Dates are
-the local calendar day, matching what the portals display.
+The order queue can be filtered by status, by client, by item type (from the
+products' type field), and by a date range, and sorted newest or oldest first.
+Dates are the local calendar day, matching what the portals display.
+
+## Deleting a client
+
+On the warehouse Clients tab, **Delete** removes a client together with all of
+their orders, products, labels, photos and notifications. You must type the
+client's name to confirm. There is no undo, so back up `data/` and `uploads/`
+first if in doubt.
 
 ## Product pictures
 
@@ -137,8 +148,10 @@ The portals use the Zip Packers brand, taken from zippackers.com and the logo:
 | Muted text | `#7A7A7A` | hints and labels |
 | Light background | `#F7F7F7` | page background |
 
-Fonts: Roboto for text and Roboto Slab for headings, loaded from Google Fonts
-with system fallbacks, so the app still works offline.
+The look follows apple.com's product pages: light-gray canvas, large white
+rounded cards, big centered headlines, pill buttons. Font: Inter from Google
+Fonts with system fallbacks (SF Pro on Apple devices, Segoe UI on Windows), so
+the app still works offline. Details in `design-system/zip-packers/MASTER.md`.
 
 Logo: drop the logo in `public/brand/logo.png` (and optionally a 64×64
 `public/brand/favicon.png`). The top bar shows it automatically; without the

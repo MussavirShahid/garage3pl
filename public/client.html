@@ -7,7 +7,7 @@
   <link rel="icon" href="/brand/favicon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Slab:wght@600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/styles.css">
 </head>
 <body>
@@ -50,9 +50,21 @@
           <div id="importResult" class="muted" style="margin-top:10px"></div>
         </div>
         <div class="card">
-          <div class="row" style="justify-content:space-between;margin-bottom:8px">
+          <div class="row" style="justify-content:space-between;margin-bottom:12px">
             <h2 style="margin:0">Your orders</h2>
             <button id="newOrder" class="btn primary sm" type="button"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Create order</button>
+          </div>
+          <div class="row" style="margin-bottom:16px">
+            <div class="seg" role="group" aria-label="Filter orders by date">
+              <button type="button" class="segbtn active" data-range="all" aria-pressed="true">All</button>
+              <button type="button" class="segbtn" data-range="today" aria-pressed="false">Today</button>
+              <button type="button" class="segbtn" data-range="yesterday" aria-pressed="false">Yesterday</button>
+              <button type="button" class="segbtn" data-range="range" aria-pressed="false">Date range</button>
+            </div>
+            <div id="rangeInputs" class="row" hidden>
+              <label class="row" style="margin:0;gap:6px">From <input type="date" id="oFrom" style="width:auto"></label>
+              <label class="row" style="margin:0;gap:6px">To <input type="date" id="oTo" style="width:auto"></label>
+            </div>
           </div>
           <div id="orders"></div>
         </div>

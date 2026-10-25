@@ -7,33 +7,49 @@
   <link rel="icon" href="/brand/favicon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Slab:wght@600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/styles.css">
 </head>
 <body>
-  <div class="topbar"><div class="inner"><div class="brand"><img class="logo" src="/brand/logo.png" alt="" onerror="this.replaceWith(Object.assign(document.createElement(&quot;span&quot;),{className:&quot;dot&quot;}))"> Zip Packers</div></div></div>
+  <div class="topbar"><div class="inner">
+    <div class="brand"><img class="logo" src="/brand/logo.png" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'dot'}))"> Zip Packers</div>
+    <span class="spacer"></span>
+    <a class="btn" href="/client.html">Client portal</a>
+    <a class="btn" href="/warehouse.html">Warehouse</a>
+  </div></div>
+
   <div class="container">
-    <div class="hero">
+    <section class="hero">
       <h1>We expedite the commerce.</h1>
-      <p class="muted lede">Zip Packers fulfillment portal. Clients send orders and labels, the warehouse picks by picture and prints, and everyone stays in sync.</p>
-      <div class="choices">
-        <a class="card choice" href="/client.html">
-          <h2>Client portal</h2>
-          <p class="muted">Upload an Excel order sheet, review products with pictures, attach shipping labels, and get notified when orders print.</p>
-          <span class="btn primary">Enter as client</span>
-        </a>
-        <a class="card choice" href="/warehouse.html">
-          <h2>Warehouse portal</h2>
-          <p class="muted">See every order to pick, with item pictures, locations and quantities. Print the label and the client is notified automatically.</p>
-          <span class="btn primary">Enter as warehouse</span>
-        </a>
+      <p class="lede">One place for your clients to send orders and labels, and for the warehouse to pick by picture, print, and notify.</p>
+      <div class="cta">
+        <a class="btn primary" href="/client.html">Enter as client</a>
+        <a class="link" href="/warehouse.html">Enter as warehouse</a>
       </div>
-      <div class="steps">
-        <div class="step"><div class="n">1</div><div><h3>Client sends orders</h3><p class="muted small">Import an Excel sheet or add items by hand, with photos and the shipping label.</p></div></div>
-        <div class="step"><div class="n">2</div><div><h3>Warehouse picks by picture</h3><p class="muted small">Each line shows the photo, shelf location and quantity. Tick lines as you go.</p></div></div>
-        <div class="step"><div class="n">3</div><div><h3>Print and notify</h3><p class="muted small">Printing the label marks the order printed and tells the client instantly.</p></div></div>
-      </div>
-    </div>
+    </section>
+
+    <section class="choices">
+      <a class="card choice" href="/client.html">
+        <div class="visual"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg></div>
+        <h2>Client portal</h2>
+        <p class="tag">Send orders. Attach labels. Stay informed.</p>
+        <p class="desc">Import an Excel sheet or add products by hand with photos, upload a shipping label per order, and get told the moment it prints.</p>
+        <div class="actions"><span class="btn primary">Enter as client</span><span class="link">Learn more</span></div>
+      </a>
+      <a class="card choice" href="/warehouse.html">
+        <div class="visual"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-2"/><path d="M6 14h12v7H6z"/></svg></div>
+        <h2>Warehouse</h2>
+        <p class="tag">Pick by picture. Print. Done.</p>
+        <p class="desc">Every order shows item photos, shelf locations and quantities. Printing the label marks it done and notifies the client automatically.</p>
+        <div class="actions"><span class="btn primary">Enter as warehouse</span><span class="link">Learn more</span></div>
+      </a>
+    </section>
+
+    <section class="steps">
+      <div class="step"><div class="n">1</div><h3>Client sends orders</h3><p class="muted small">Excel import or by hand, with photos and the shipping label.</p></div>
+      <div class="step"><div class="n">2</div><h3>Warehouse picks by picture</h3><p class="muted small">Photo, shelf location and quantity on every line. Tick as you go.</p></div>
+      <div class="step"><div class="n">3</div><h3>Print and notify</h3><p class="muted small">Printing marks the order printed and tells the client instantly.</p></div>
+    </section>
   </div>
 </body>
 </html>
