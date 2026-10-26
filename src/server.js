@@ -2,8 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, extname } from 'node:path';
-import { existsSync, mkdirSync, createReadStream, unlinkSync, readFileSync } from 'node:fs';
-import { PDFDocument, StandardFonts, rgb, degrees } from 'pdf-lib';
+import { existsSync, mkdirSync, createReadStream, unlinkSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 import { db } from './db.js';
@@ -499,85 +498,9 @@ app.get('/api/client/orders/:id/label', clientAuth, (req, res) => {
   streamLabel(db.orders.find((x) => x.id === req.params.id && x.client_id === req.client.id), res);
 });
 
-// ---------- printable label: original label + the order's contents at the bottom ----------
-// The stored label is never modified; this builds a fresh PDF each time it is printed.
-// LABEL_FOOTER_OFFSET_IN (default 0.35) is how far above the bottom edge the text sits.
-async function stampedLabel(order) {
-  const full = join(UP_LABELS, order.label.filename);
-  const bytes = readFileSync(full);
-  const mime = (order.label.mime || '').toLowerCase();
-  const isPdf = mime === 'application/pdf' || order.label.filename.toLowerCase().endsWith('.pdf');
-  let pdf;
-  if (isPdf) {
-    pdf = await PDFDocument.load(bytes, { ignoreEncryption: true });
-  } else {
-    // Image label: put it on a 4in-wide page with room beneath for the contents.
-    pdf = await PDFDocument.create();
-    const img = mime.includes('png') ? await pdf.embedPng(bytes) : await pdf.embedJpg(bytes);
-    const w = 288; // 4 in
-    const h = (img.height / img.width) * w;
-    const page = pdf.addPage([w, Math.max(h + 72, 432)]); // at least 4x6 in
-    page.drawImage(img, { x: 0, y: page.getHeight() - h, width: w, height: h });
-  }
-  const page = pdf.getPage(0);
-  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const regular = await pdf.embedFont(StandardFonts.Helvetica);
-  // Many carrier labels (FedEx especially) carry a /Rotate flag or are laid out
-  // landscape; UPS labels usually don't. pdf-lib draws in the UNROTATED page
-  // space, so we place the contents in the label's *displayed* orientation and
-  // then rotate the text to match, instead of drawing against the raw bottom edge.
-  const rot = (((page.getRotation().angle || 0) % 360) + 360) % 360; // 0 | 90 | 180 | 270
-  const { width: pw, height: ph } = page.getSize();
-  const dispW = rot === 90 || rot === 270 ? ph : pw; // width of the label as shown
-  // Map a point given in displayed coords (origin at the displayed bottom-left,
-  // x to the right, y up) to raw page coords, inverting the viewer's rotation.
-  const toPage = (dx, dy) => {
-    switch (rot) {
-      case 90: return { x: pw - dy, y: dx };
-      case 180: return { x: pw - dx, y: ph - dy };
-      case 270: return { x: dy, y: ph - dx };
-      default: return { x: dx, y: dy };
-    }
-  };
-  const offset = Number(process.env.LABEL_FOOTER_OFFSET_IN || 0.35) * 72;
-  const margin = 0.3 * 72;
-  const size = order.items.length > 4 ? 9 : 11;
-  const lineHeight = size + 3;
-  const maxWidth = dispW - 2 * margin;
-  // Wrap each "Name ×qty" line to the label width.
-  const lines = [];
-  for (const it of order.items) {
-    const text = `${it.name}  ×${it.quantity}`;
-    let cur = '';
-    for (const word of text.split(' ')) {
-      const next = cur ? `${cur} ${word}` : word;
-      if (cur && bold.widthOfTextAtSize(next, size) > maxWidth) { lines.push(cur); cur = word; } else { cur = next; }
-    }
-    if (cur) lines.push(cur);
-  }
-  let dy = offset;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const p = toPage(margin, dy);
-    page.drawText(lines[i], { x: p.x, y: p.y, size, font: bold, rotate: degrees(rot), color: rgb(0, 0, 0) });
-    dy += lineHeight;
-  }
-  const h = toPage(margin, dy + 1);
-  page.drawText(`CONTENTS · ORDER ${order.order_number}`, { x: h.x, y: h.y, size: 7, font: regular, rotate: degrees(rot), color: rgb(0.3, 0.3, 0.3) });
-  return pdf.save();
-}
-
-app.get('/api/wh/orders/:id/print-label', warehouseAuth, async (req, res) => {
-  const o = db.orders.find((x) => x.id === req.params.id);
-  if (!o || !o.label) { res.status(404).send('No label on file.'); return; }
-  try {
-    const out = await stampedLabel(o);
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="label-${o.order_number}.pdf"`);
-    res.send(Buffer.from(out));
-  } catch (err) {
-    console.warn(`[label] could not stamp label for ${o.order_number}, serving the original:`, err.message);
-    streamLabel(o, res);
-  }
+// ---------- printable label: the original file, exactly as the client uploaded it ----------
+app.get('/api/wh/orders/:id/print-label', warehouseAuth, (req, res) => {
+  streamLabel(db.orders.find((x) => x.id === req.params.id), res);
 });
 
 // ---------- misc ----------
