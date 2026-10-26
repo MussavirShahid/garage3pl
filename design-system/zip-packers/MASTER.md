@@ -18,8 +18,8 @@ from zippackers.com and the logo.
 | `--text` / `--muted` | `#1d1d1f` / `#6e6e73` | `#f5f5f7` / `#a1a1a6` | ≥ 4.5:1 on surface |
 | `--line` / `--line-strong` | `#e8e8ed` / `#d2d2d7` | `#2f2f33` / `#424245` | hairlines, segmented tracks, inputs |
 | `--accent` | `#124265` navy | `#4a8ad0` | primary pills, links, locations |
-| `--gold` | `#ffbb00` | same | brand dot, step numbers, focus ring |
-| `--nav-bg` | `rgba(18,66,101,.94)` | `rgba(29,29,31,.94)` | translucent top bar |
+| `--yellow` (alias `--gold`) | `#ffd400` | same | **lead brand color**: top bar, key-action button, active-tab indicator, focus ring, step numbers |
+| `--nav-bg` / `--nav-ink` | yellow `.96` / `#124265` navy | yellow / `#1d1d1f` | brand top bar and its text; `--nav-stripe` is the 3 px line under it |
 | `--ok` `--warn` `--info` `--danger` | green / amber / navy / red + `-soft` fills | tuned for dark | status chips, errors |
 
 Shape: `--radius` 12, `--radius-lg` 18, `--radius-xl` 28 (modals), `--pill` 980.
@@ -30,12 +30,21 @@ Motion: 180 ms, `cubic-bezier(.25,.1,.25,1)`; disabled under `prefers-reduced-mo
 
 ## Components
 
-- **Top bar**: 52 px, dark translucent with blur, white brand text, gold dot or logo chip, pill buttons.
-- **Buttons**: pills. Primary = navy; default = light gray; danger = soft red; `.link` = navy text with ›.
+- **Top bar**: 52 px, **brand yellow** with blur, navy text and logo chip, navy pill buttons, and a 3 px
+  navy stripe along its bottom edge (yellow + navy is the Zip Packers pairing). Focus rings on the bar are navy.
+- **Buttons**: pills. Primary = navy; **yellow = the one key action on a screen** (warehouse: Print label);
+  default = light gray; danger = soft red; `.link` = navy text with ›.
   40 px tall (44 px on ≤640 px). `aria-busy` spinner while an async action runs.
 - **Segmented controls**: `.tabs` and `.seg` share one style: gray track, white active pill with soft shadow.
-  Used for portal tabs and the client's date filter (All / Today / Yesterday / Date range).
+  Portal tabs add a 2 px yellow indicator inside the active pill. Used for portal tabs and the order filters
+  on both portals (status pills on the warehouse; All / Today / Yesterday / Date range on both).
 - **Cards**: white, 18 px radius, no border, 32 px padding, subtle 2 px shadow (none in dark).
+- **Order cards**: image-led like apple.com product cards. Grid min 270 px so the photo mosaic fills
+  the white panel (~290 px wide at desktop); order number in navy. The photo panel is a button with a
+  small navy magnifier badge: it opens the **lightbox**.
+- **Lightbox**: full-screen dark overlay (`role=dialog`), photo up to 72 vh on white, caption with
+  name · SKU · ×qty, round prev/next/close buttons (44 px), "n of N" counter, ←/→ and Esc, backdrop
+  click closes, focus returns to the opener. Single-photo orders hide the arrows.
 - **Product tiles**: centered, 140 px image, name, SKU · type, location pill. Lift 2 px on hover.
 - **Status chips**: text + leading dot, semantic soft fill. Never color alone.
 - **Forms**: visible `<label for>`, required marker, inline `.field-error` beside the field
@@ -43,7 +52,8 @@ Motion: 180 ms, `cubic-bezier(.25,.1,.25,1)`; disabled under `prefers-reduced-mo
 - **Tables**: in `.table-wrap` (horizontal scroll on narrow screens), hairline rows, hover tint.
 - **Empty states**: icon + headline + one sentence + next action, on a gray rounded panel.
 - **Loading**: skeleton rows on first load; toasts are pills, auto-dismiss 3.5 s.
-- **Pick list**: gray rounded rows, 96 px photo, location pill, 30 px quantity, 44 px tick-off.
+- **Pick list**: gray rounded rows, 128 px photo (a button that opens the lightbox), location pill,
+  30 px quantity, 44 px tick-off.
 - **Destructive actions**: delete order asks a confirm; delete client requires typing the name.
 
 ## Rules applied (priority order)

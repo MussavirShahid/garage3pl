@@ -1,5 +1,5 @@
 (() => {
-  const { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, mosaic, fmtDate, statusLabel, thumb, localDay } = G;
+  const { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, mosaic, fmtDate, statusLabel, thumb, localDay, lightbox } = G;
   const KEY = 'g3_wh_pass';
   let pass = localStorage.getItem(KEY) || '';
   let orders = [];
@@ -91,18 +91,30 @@
       const units = o.items.reduce((s, it) => s + it.quantity, 0);
       return `
       <article class="order-card" aria-label="Order ${esc(o.order_number)} for ${esc(o.client_name)}">
-        <div class="order-visual card">${mosaic(o.items)}</div>
+        <button type="button" class="order-visual card zoomOrder" data-id="${o.id}" aria-label="Enlarge photos for order ${esc(o.order_number)}">${mosaic(o.items)}<span class="zoom-hint" aria-hidden="true">${icon('search')}</span></button>
         <div class="order-status"><span class="status ${esc(o.status)}">${esc(statusLabel(o.status))}</span></div>
         <h3 class="order-title" title="${esc(o.order_number)}">${esc(o.order_number)}</h3>
         <p class="order-sub">${esc(o.client_name)}</p>
         <p class="order-fine">${o.items.length} line${o.items.length === 1 ? '' : 's'} · ${units} unit${units === 1 ? '' : 's'}<br>${o.ship_to ? esc(o.ship_to) : 'No ship-to address'}<br>${esc(fmtDate(o.created_at))}${o.printed_at ? `<br>Printed ${esc(fmtDate(o.printed_at))}` : ''}</p>
         <div class="order-actions">
-          <button class="btn primary print" type="button" data-id="${o.id}" ${o.has_label ? '' : 'disabled title="Client has not uploaded a label yet"'}>${icon('print')} ${o.status === 'printed' ? 'Reprint' : 'Print label'}</button>
+          <button class="btn gold print" type="button" data-id="${o.id}" ${o.has_label ? '' : 'disabled title="Client has not uploaded a label yet"'}>${icon('print')} ${o.status === 'printed' ? 'Reprint' : 'Print label'}</button>
           <button class="link pick" type="button" data-id="${o.id}">Pick list</button>
         </div>
       </article>`; }).join('')}</div>`;
     $$('.pick', el).forEach((b) => b.addEventListener('click', () => openPick(b.dataset.id)));
     $$('.print', el).forEach((b) => b.addEventListener('click', () => busy(b, () => printLabel(b.dataset.id))));
+    wireZoom(el);
+  }
+
+  // Clicking an order's photo panel opens the lightbox on the photo that was clicked.
+  function wireZoom(root) {
+    $$('.zoomOrder', root).forEach((b) => b.addEventListener('click', (e) => {
+      const o = orders.find((x) => x.id === b.dataset.id);
+      if (!o) return;
+      const cell = e.target.closest('.mimg');
+      const idx = cell ? Array.prototype.indexOf.call(cell.parentElement.children, cell) : 0;
+      lightbox(o.items, Math.max(0, idx), b);
+    }));
   }
 
   // Print flow: open the label in a print tab, mark the order printed, notify the client.
@@ -129,10 +141,10 @@
       </div>
       <hr class="sep">
       <p class="muted small" style="margin:0 0 4px">Tick each line as you pick it.</p>
-      <div class="stack">${o.items.map((it) => `
+      <div class="stack">${o.items.map((it, i) => `
         <div class="pick-item">
           <label class="pick-check"><input type="checkbox" class="picked" aria-label="Picked: ${esc(it.name)}"></label>
-          ${thumb(it.image, it.name, 'lg')}
+          <button type="button" class="zoom" data-i="${i}" aria-label="Enlarge photo of ${esc(it.name)}">${thumb(it.image, it.name, 'lg')}</button>
           <div style="flex:1;min-width:0">
             <h3 style="margin:0">${esc(it.name)}</h3>
             <div class="muted" style="font-size:13px">${esc(it.sku || 'no SKU')}${it.type ? ` · ${esc(it.type)}` : ''}</div>
@@ -146,11 +158,12 @@
       <hr class="sep">
       <div class="row" style="justify-content:flex-end">
         ${o.has_label ? `<a class="btn" target="_blank" href="/api/wh/orders/${o.id}/print-label?pass=${encodeURIComponent(pass)}">${icon('file')} View label</a>` : '<span class="muted">Waiting for client to upload a label</span>'}
-        <button class="btn primary" id="printM" type="button" ${o.has_label ? '' : 'disabled'}>${icon('print')} Print label &amp; notify client</button>
+        <button class="btn gold" id="printM" type="button" ${o.has_label ? '' : 'disabled'}>${icon('print')} Print label &amp; notify client</button>
       </div>`;
     $('#modalBg').classList.add('open');
     $('#closeM').onclick = closeModal;
     $('#printM').onclick = () => { closeModal(); printLabel(o.id); };
+    $$('.zoom', m).forEach((b) => b.addEventListener('click', () => lightbox(o.items, Number(b.dataset.i) || 0, b)));
     $$('.picked', m).forEach((cb) => cb.addEventListener('change', () => cb.closest('.pick-item').classList.toggle('done', cb.checked)));
     $$('.setloc', m).forEach((b) => b.addEventListener('click', async () => {
       const loc = prompt('Garage location for this product (e.g. Shelf A2):', b.dataset.cur || '');

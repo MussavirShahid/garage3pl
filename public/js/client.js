@@ -1,5 +1,5 @@
 (() => {
-  const { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, mosaic, fmtDate, statusLabel, thumb, localDay } = G;
+  const { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, mosaic, fmtDate, statusLabel, thumb, localDay, lightbox } = G;
   const KEY = 'g3_client_code';
   let code = localStorage.getItem(KEY) || '';
   let orders = [], products = [], notifs = [];
@@ -75,7 +75,7 @@
       const units = o.items.reduce((s, it) => s + it.quantity, 0);
       return `
       <article class="order-card" aria-label="Order ${esc(o.order_number)}">
-        <div class="order-visual card">${mosaic(o.items)}</div>
+        <button type="button" class="order-visual card zoomOrder" data-id="${o.id}" aria-label="Enlarge photos for order ${esc(o.order_number)}">${mosaic(o.items)}<span class="zoom-hint" aria-hidden="true">${icon('search')}</span></button>
         <div class="order-status"><span class="status ${esc(o.status)}">${esc(statusLabel(o.status))}</span></div>
         <h3 class="order-title" title="${esc(o.order_number)}">${esc(o.order_number)}</h3>
         <p class="order-sub">${o.items.length} item${o.items.length === 1 ? '' : 's'} · ${units} unit${units === 1 ? '' : 's'}</p>
@@ -86,6 +86,14 @@
           ${canDelete(o) ? `<button class="link danger delOrder" type="button" data-id="${o.id}" data-num="${esc(o.order_number)}" aria-label="Delete order ${esc(o.order_number)}">Delete</button>` : ''}
         </div>
       </article>`; }).join('')}</div>`;
+    // Clicking an order's photo panel opens the lightbox on the photo that was clicked.
+    $$('.zoomOrder', el).forEach((b) => b.addEventListener('click', (e) => {
+      const o = orders.find((x) => x.id === b.dataset.id);
+      if (!o) return;
+      const cell = e.target.closest('.mimg');
+      const idx = cell ? Array.prototype.indexOf.call(cell.parentElement.children, cell) : 0;
+      lightbox(o.items, Math.max(0, idx), b);
+    }));
     $$('.delOrder', el).forEach((b) => b.addEventListener('click', async () => {
       if (!confirm(`Delete order ${b.dataset.num}? This removes its items and label and cannot be undone.`)) return;
       try { await busy(b, () => api(`/api/client/orders/${b.dataset.id}`, { method: 'DELETE', headers: H() })); toast(`Order ${b.dataset.num} deleted.`); orders = orders.filter((o) => o.id !== b.dataset.id); renderOrders(); }

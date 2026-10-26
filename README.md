@@ -207,8 +207,8 @@ The portals use the Zip Packers brand, taken from zippackers.com and the logo:
 
 | Role | Color | Where it appears |
 |---|---|---|
-| Navy (primary) | `#124265` | buttons, links, "ready" status |
-| Gold (highlight) | `#FFBB00` | bar under the top bar, active tab, notification edge |
+| Yellow (brand) | `#FFD400` | top bar, the key action button (Print label), active tab indicator, focus ring |
+| Navy (support) | `#124265` | primary buttons, links, order numbers, "ready" status, stripe under the top bar |
 | Steel blue | `#5E7FA3` | portal name pill, secondary accents |
 | Text | `#333333` | body text |
 | Muted text | `#7A7A7A` | hints and labels |

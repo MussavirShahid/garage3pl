@@ -27,6 +27,8 @@ window.G = (() => {
     globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
     trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
     calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+    chevL: '<path d="M15 6l-6 6 6 6"/>',
+    chevR: '<path d="M9 6l6 6-6 6"/>',
   };
   function icon(name, label) {
     const a = label ? `role="img" aria-label="${esc(label)}"` : 'aria-hidden="true"';
@@ -111,5 +113,53 @@ window.G = (() => {
     return `<div class="thumb placeholder ${cls}">no image</div>`;
   }
 
-  return { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, mosaic, fmtDate, statusLabel, thumb, localDay };
+  // ---------- lightbox: enlarge order / product photos ----------
+  // lightbox(items, index, opener): items are order lines ({ name, sku, quantity, image });
+  // prev/next and arrow keys flip through them, Esc or the backdrop closes, focus returns to opener.
+  let lbEl = null, lbItems = [], lbCur = 0, lbOpener = null;
+  function lbShow(i) {
+    if (!lbItems.length) return;
+    lbCur = (i + lbItems.length) % lbItems.length;
+    const it = lbItems[lbCur];
+    $('.lb-stage', lbEl).innerHTML = it.image
+      ? `<img class="lb-img" src="${esc(it.image)}" alt="${esc(it.name)}" onerror="this.outerHTML='<div class=&quot;lb-ph&quot;>No image</div>'">`
+      : '<div class="lb-ph">No image</div>';
+    const meta = [it.sku, it.quantity ? `×${it.quantity}` : ''].filter(Boolean).join(' · ');
+    $('.lb-cap', lbEl).innerHTML = `<strong>${esc(it.name)}</strong>${meta ? `<span>${esc(meta)}</span>` : ''}`;
+    $('.lb-count', lbEl).textContent = `${lbCur + 1} of ${lbItems.length}`;
+    lbEl.classList.toggle('single', lbItems.length === 1);
+  }
+  function lbClose() {
+    if (!lbEl) return;
+    lbEl.classList.remove('open');
+    document.body.classList.remove('lb-open');
+    if (lbOpener && lbOpener.focus) lbOpener.focus();
+    lbOpener = null;
+  }
+  function lightbox(items, index = 0, opener = null) {
+    if (!Array.isArray(items) || !items.length) return;
+    if (!lbEl) {
+      lbEl = document.createElement('div');
+      lbEl.className = 'lb';
+      lbEl.setAttribute('role', 'dialog'); lbEl.setAttribute('aria-modal', 'true'); lbEl.setAttribute('aria-label', 'Product photo'); lbEl.tabIndex = -1;
+      lbEl.innerHTML = `<button class="lb-btn lb-close" type="button" aria-label="Close">${icon('x')}</button><div class="lb-count" aria-live="polite"></div><button class="lb-btn lb-prev" type="button" aria-label="Previous photo">${icon('chevL')}</button><figure class="lb-fig"><div class="lb-stage"></div><figcaption class="lb-cap"></figcaption></figure><button class="lb-btn lb-next" type="button" aria-label="Next photo">${icon('chevR')}</button>`;
+      document.body.appendChild(lbEl);
+      lbEl.addEventListener('click', (e) => { if (e.target === lbEl) lbClose(); });
+      $('.lb-close', lbEl).addEventListener('click', lbClose);
+      $('.lb-prev', lbEl).addEventListener('click', () => lbShow(lbCur - 1));
+      $('.lb-next', lbEl).addEventListener('click', () => lbShow(lbCur + 1));
+      lbEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); lbClose(); }
+        else if (e.key === 'ArrowLeft') { e.preventDefault(); lbShow(lbCur - 1); }
+        else if (e.key === 'ArrowRight') { e.preventDefault(); lbShow(lbCur + 1); }
+      });
+    }
+    lbItems = items; lbOpener = opener;
+    lbShow(index);
+    lbEl.classList.add('open');
+    document.body.classList.add('lb-open');
+    lbEl.focus();
+  }
+
+  return { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, mosaic, fmtDate, statusLabel, thumb, localDay, lightbox };
 })();
