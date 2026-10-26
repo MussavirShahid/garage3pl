@@ -1,5 +1,5 @@
 (() => {
-  const { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, mosaic, fmtDate, statusLabel, thumb } = G;
+  const { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, mosaic, fmtDate, statusLabel, thumb, localDay } = G;
   const KEY = 'g3_client_code';
   let code = localStorage.getItem(KEY) || '';
   let orders = [], products = [], notifs = [];
@@ -39,7 +39,6 @@
   }
 
   // ---------- orders: date filter ----------
-  const localDay = (d) => { d = new Date(d); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
   function filterByDate(list) {
     const today = localDay(new Date());
     const y = new Date(); y.setDate(y.getDate() - 1); const yesterday = localDay(y);

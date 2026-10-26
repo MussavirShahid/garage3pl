@@ -36,26 +36,33 @@
 
       <div id="tab-orders">
         <div class="card">
-          <div class="row" style="justify-content:space-between;margin-bottom:10px">
+          <div class="row" style="justify-content:space-between;margin-bottom:12px">
             <h2 style="margin:0">Order queue</h2>
-            <div class="row toolbar">
-              <select id="statusFilter" style="width:auto" title="Status">
-                <option value="label_ready">Ready to print</option>
-                <option value="new">Awaiting label</option>
-                <option value="printed">Printed</option>
-                <option value="all">All statuses</option>
-              </select>
-              <select id="clientFilter" style="width:auto" title="Client"><option value="">All clients</option></select>
-              <select id="typeFilter" style="width:auto" title="Item type"><option value="">All item types</option></select>
-              <label class="row" style="margin:0;gap:6px;font-size:13px">From <input type="date" id="fromDate" style="width:auto"></label>
-              <label class="row" style="margin:0;gap:6px;font-size:13px">To <input type="date" id="toDate" style="width:auto"></label>
-              <button id="clearDates" class="btn sm" type="button" title="Clear dates">Clear dates</button>
-              <select id="sortOrder" style="width:auto" title="Sort by date">
-                <option value="newest">Newest first</option>
-                <option value="oldest">Oldest first</option>
-              </select>
-              <button id="refresh" class="btn sm" type="button"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg> Refresh</button>
+            <button id="refresh" class="btn sm" type="button"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg> Refresh</button>
+          </div>
+          <div class="row" style="margin-bottom:16px">
+            <div class="seg" role="group" aria-label="Filter orders by status">
+              <button type="button" class="segbtn active" data-status="label_ready" aria-pressed="true">Ready to print</button>
+              <button type="button" class="segbtn" data-status="new" aria-pressed="false">Awaiting label</button>
+              <button type="button" class="segbtn" data-status="printed" aria-pressed="false">Printed</button>
+              <button type="button" class="segbtn" data-status="all" aria-pressed="false">All statuses</button>
             </div>
+            <div class="seg" role="group" aria-label="Filter orders by date">
+              <button type="button" class="segbtn active" data-range="all" aria-pressed="true">All</button>
+              <button type="button" class="segbtn" data-range="today" aria-pressed="false">Today</button>
+              <button type="button" class="segbtn" data-range="yesterday" aria-pressed="false">Yesterday</button>
+              <button type="button" class="segbtn" data-range="range" aria-pressed="false">Date range</button>
+            </div>
+            <div id="rangeInputs" class="row" hidden>
+              <label class="row" style="margin:0;gap:6px">From <input type="date" id="fromDate" style="width:auto"></label>
+              <label class="row" style="margin:0;gap:6px">To <input type="date" id="toDate" style="width:auto"></label>
+            </div>
+            <select id="clientFilter" style="width:auto" title="Client" aria-label="Client"><option value="">All clients</option></select>
+            <select id="typeFilter" style="width:auto" title="Item type" aria-label="Item type"><option value="">All item types</option></select>
+            <select id="sortOrder" style="width:auto" title="Sort by date" aria-label="Sort by date">
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+            </select>
           </div>
           <div id="orders"></div>
         </div>

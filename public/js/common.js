@@ -100,10 +100,16 @@ window.G = (() => {
     return { new: 'Awaiting label', label_ready: 'Ready to print', printed: 'Printed', shipped: 'Shipped' }[s] || s;
   }
 
+  // Local calendar day as YYYY-MM-DD: what the portals display and what the server's date filters compare.
+  function localDay(d) {
+    d = new Date(d);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
   function thumb(src, alt = '', cls = '') {
     if (src) return `<img class="thumb ${cls}" src="${esc(src)}" alt="${esc(alt)}" loading="lazy" width="56" height="56" onerror="this.outerHTML='<div class=&quot;thumb placeholder ${cls}&quot;>no image</div>'">`;
     return `<div class="thumb placeholder ${cls}">no image</div>`;
   }
 
-  return { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, mosaic, fmtDate, statusLabel, thumb };
+  return { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, mosaic, fmtDate, statusLabel, thumb, localDay };
 })();

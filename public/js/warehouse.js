@@ -1,5 +1,5 @@
 (() => {
-  const { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, mosaic, fmtDate, statusLabel, thumb } = G;
+  const { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, mosaic, fmtDate, statusLabel, thumb, localDay } = G;
   const KEY = 'g3_wh_pass';
   let pass = localStorage.getItem(KEY) || '';
   let orders = [];
@@ -30,19 +30,40 @@
     for (const id of ['orders', 'clients']) $('#tab-' + id).hidden = id !== t.dataset.tab;
   }));
 
-  // ---------- orders ----------
-  for (const id of ['statusFilter', 'clientFilter', 'typeFilter', 'fromDate', 'toDate', 'sortOrder']) $('#' + id).addEventListener('change', loadOrders);
+  // ---------- orders: filters (same segmented controls as the client portal) ----------
+  let status = 'label_ready'; // label_ready | new | printed | all
+  let dateRange = 'all';      // all | today | yesterday | range
+  $$('.segbtn[data-status]').forEach((b) => b.addEventListener('click', () => {
+    status = b.dataset.status;
+    $$('.segbtn[data-status]').forEach((x) => { x.classList.toggle('active', x === b); x.setAttribute('aria-pressed', x === b); });
+    loadOrders();
+  }));
+  $$('.segbtn[data-range]').forEach((b) => b.addEventListener('click', () => {
+    dateRange = b.dataset.range;
+    $$('.segbtn[data-range]').forEach((x) => { x.classList.toggle('active', x === b); x.setAttribute('aria-pressed', x === b); });
+    $('#rangeInputs').hidden = dateRange !== 'range';
+    loadOrders();
+  }));
+  for (const id of ['clientFilter', 'typeFilter', 'fromDate', 'toDate', 'sortOrder']) $('#' + id).addEventListener('change', loadOrders);
   $('#refresh').addEventListener('click', () => { loadTypes(); loadOrders(); });
-  $('#clearDates').addEventListener('click', () => { $('#fromDate').value = ''; $('#toDate').value = ''; loadOrders(); });
+
+  // The server filters on the local calendar day, so Today/Yesterday become a one-day from/to.
+  function dateBounds() {
+    if (dateRange === 'today') { const d = localDay(new Date()); return { from: d, to: d }; }
+    if (dateRange === 'yesterday') { const y = new Date(); y.setDate(y.getDate() - 1); const d = localDay(y); return { from: d, to: d }; }
+    if (dateRange === 'range') return { from: $('#fromDate').value, to: $('#toDate').value };
+    return {};
+  }
 
   function queryString() {
     const q = new URLSearchParams();
-    q.set('status', $('#statusFilter').value);
+    q.set('status', status);
     q.set('sort', $('#sortOrder').value);
     if ($('#typeFilter').value) q.set('type', $('#typeFilter').value);
     if ($('#clientFilter').value) q.set('client', $('#clientFilter').value);
-    if ($('#fromDate').value) q.set('from', $('#fromDate').value);
-    if ($('#toDate').value) q.set('to', $('#toDate').value);
+    const { from, to } = dateBounds();
+    if (from) q.set('from', from);
+    if (to) q.set('to', to);
     return q.toString();
   }
 
