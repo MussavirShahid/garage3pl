@@ -27,12 +27,13 @@ if ! command -v cloudflared >/dev/null 2>&1; then
 fi
 
 echo "Starting Zip Packers on port $PORT ..."
-node src/server.js &
+echo "(start.sh pulls the latest code from GitHub first, then runs the server)"
+bash start.sh &
 SERVER_PID=$!
 # Stop the server when this script exits (Ctrl+C on the tunnel).
 trap 'echo; echo "Stopping server..."; kill "$SERVER_PID" 2>/dev/null || true' EXIT
 
-sleep 3
+sleep 8
 
 echo
 echo "Opening Cloudflare quick tunnel. Your public URL is printed below as"

@@ -23,6 +23,16 @@ start it directly instead, which needs no script permissions:
 node src/server.js
 ```
 
+**Easiest: use the start script.** It pulls the latest code from GitHub,
+installs anything new, then runs the server, so every launch is on the newest
+version:
+
+- Windows: double-click `start.cmd` (or run `.\start.cmd`)
+- macOS/Linux: `bash start.sh`
+
+This only updates when the folder is a git clone. A ZIP download has no link
+to GitHub, so clone instead (see below).
+
 Open http://localhost:4000. On first run it creates:
 
 | What | Value |
@@ -68,8 +78,12 @@ node src/server.js
 
 To carry your data across, copy the `data/` and `uploads/` folders from the
 old machine into the clone before starting the server. Either way, commit and
-push from whichever machine you edited on, and `git pull` on the other before
-continuing.
+push from whichever machine you edited on; starting with `start.cmd` /
+`start.sh` on the other machine pulls those changes automatically. (If you
+start with plain `node src/server.js`, run `git pull` first.)
+
+Don't use GitHub's "Download ZIP" for a machine you'll keep using: a ZIP has
+no git link, so it never receives updates.
 
 ## Excel format
 

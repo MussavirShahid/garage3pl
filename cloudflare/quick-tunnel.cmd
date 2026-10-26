@@ -29,10 +29,11 @@ if errorlevel 1 (
 )
 
 echo Starting Zip Packers on port %PORT% in a new window...
-start "Zip Packers server" cmd /k "cd /d "%~dp0\.." && node src\server.js"
+echo (start.cmd pulls the latest code from GitHub first, then runs the server)
+start "Zip Packers server" cmd /k "cd /d "%~dp0\.." && call start.cmd"
 
 echo Waiting for the server to come up...
-timeout /t 3 >nul
+timeout /t 8 >nul
 
 echo.
 echo Opening Cloudflare quick tunnel. Your public URL is printed below as
