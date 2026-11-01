@@ -1,27 +1,23 @@
-// First-run setup: default warehouse passcode and a demo client.
+// First-run setup: the warehouse passcode (stored hashed) and a demo client.
 import { db } from './db.js';
+import { hashPassword, verifyPassword } from './passwords.js';
 
 export function ensureSeed() {
-  let changed = false;
-  // WAREHOUSE_PASSCODE always wins when set, so the passcode can be changed on
-  // any start. Without it, the stored value is kept (default "warehouse").
+  const out = { usingDefaultPasscode: false };
+  // WAREHOUSE_PASSCODE always wins when set, so the passcode can be changed on any start.
+  // Without it, the stored hash is kept; the very first start falls back to "warehouse".
   const envPass = process.env.WAREHOUSE_PASSCODE;
-  if (envPass && db.settings.warehousePass !== envPass) {
-    db.settings.warehousePass = envPass;
-    changed = true;
-  } else if (!db.settings.warehousePass) {
-    db.settings.warehousePass = 'warehouse';
-    changed = true;
+  const stored = db.setting('warehouse_pass_hash');
+  if (envPass) {
+    if (!stored || !verifyPassword(envPass, stored)) db.setSetting('warehouse_pass_hash', hashPassword(envPass));
+  } else if (!stored) {
+    db.setSetting('warehouse_pass_hash', hashPassword('warehouse'));
+    out.usingDefaultPasscode = true;
+  } else {
+    out.usingDefaultPasscode = verifyPassword('warehouse', stored);
   }
-  if (db.clients.length === 0) {
-    db.clients.push({
-      id: db.uid(),
-      name: 'Demo Client',
-      email: 'demo@example.com',
-      code: 'DEMO01',
-      created_at: new Date().toISOString(),
-    });
-    changed = true;
+  if (!db.get('SELECT 1 AS x FROM clients LIMIT 1')) {
+    db.run('INSERT INTO clients (id, name, email, code, created_at) VALUES (?,?,?,?,?)', db.uid(), 'Demo Client', 'demo@example.com', 'DEMO01', new Date().toISOString());
   }
-  if (changed) db.flush();
+  return out;
 }

@@ -38,7 +38,7 @@ Open http://localhost:4000. On first run it creates:
 
 | What | Value |
 |---|---|
-| Warehouse passcode | `warehouse` (set `WAREHOUSE_PASSCODE` on any start to change it) |
+| Warehouse passcode | `warehouse` (change it on the warehouse **Clients** tab, or set `WAREHOUSE_PASSCODE` on any start) |
 | Demo client code | `DEMO01` |
 
 Try it: sign in as the client with `DEMO01`, add a product, log some inventory
@@ -202,6 +202,37 @@ scripts and a step-by-step guide are in [`cloudflare/`](cloudflare/README.md).
 Cloudflare's serverless tiers (Pages, Workers) cannot run this app, because it
 needs a Node server and a persistent disk; the tunnel approach does.
 
+### Deploy on Namecheap shared hosting (cPanel)
+
+Namecheap's shared plans run Node apps through cPanel's **Setup Node.js App**
+(Phusion Passenger). The data and uploads stay in the app folder, which is on
+persistent disk, so nothing is lost between restarts.
+
+1. In cPanel, open **Setup Node.js App → Create Application**.
+   - **Node.js version:** 22 or newer (needed for the built-in SQLite). If the
+     list only offers 20, pick it and run `npm install better-sqlite3` in step 5.
+   - **Application mode:** Production.
+   - **Application root:** a folder *outside* `public_html`, e.g. `zippackers`.
+   - **Application URL:** the domain or subdomain to serve it on.
+   - **Application startup file:** `app.cjs`
+2. Upload the project into that folder (File Manager, or `git clone` in the
+   cPanel Terminal), without `node_modules`, `data` or `uploads`.
+3. Add environment variables in the same screen: `WAREHOUSE_PASSCODE` (a strong
+   one; it is hashed on first start), and optionally `SESSION_DAYS`,
+   `AUTO_BACKUP_HOURS`, `CLIENT_WEBHOOK_URL`, `SERPAPI_KEY`.
+4. Click **Run NPM Install**, then **Restart**. Open the application URL.
+5. If you moved data from your laptop, copy `data/` and `uploads/` into the
+   application root (an old `data/store.json` is imported automatically on the
+   first start) and restart.
+6. Make sure the domain has a valid SSL certificate (Namecheap's AutoSSL in
+   cPanel). The session cookie is only sent over HTTPS when the site runs on
+   HTTPS, which is what you want.
+
+Backups: schedule a daily cron job in cPanel that runs
+`cd ~/zippackers && node src/backup.js`, and download `data/backups/` and
+`uploads/` now and then. Updates: pull the new code (or re-upload), click
+**Run NPM Install** if `package.json` changed, then **Restart**.
+
 ## Brand
 
 The portals use the Zip Packers brand, taken from zippackers.com and the logo:
@@ -225,26 +256,78 @@ Logo: drop the logo in `public/brand/logo.png` (and optionally a 64×64
 file it falls back to a gold dot. The CSS variables live at the top of
 `public/css/styles.css` if you ever want to retune them.
 
-## Where data lives
+## Database and backups
 
-- `data/store.json` — all clients, products, orders, notifications
+Records live in a **SQLite** database, `data/zip.sqlite`: a real relational
+database (tables, indexes, foreign keys, transactions) in a single file, with
+nothing to install or administer. It uses the SQLite built into Node 22.13+ and
+Node 24. On an older Node, run `npm install better-sqlite3` once and the same
+code uses that instead.
+
+- `data/zip.sqlite` — clients, products, orders, deliveries, notifications, sessions, settings
+- `data/backups/` — automatic daily copies of the database (newest 14 kept; `AUTO_BACKUP_HOURS=0` disables)
 - `uploads/labels/` — shipping labels (served only to the owning client and the warehouse)
 - `uploads/products/` — uploaded product photos
 
-Back up the `data/` and `uploads/` folders.
+**Backups.** `npm run backup` writes a consistent copy to `data/backups/` at
+any time; the server also does this once a day by itself. A complete backup is
+`data/` plus `uploads/`. To restore, stop the server, copy a backup file over
+`data/zip.sqlite`, and start again. The server checks the file's integrity on
+every start and refuses to run on a damaged one.
 
-## Security notes
+**Upgrading from the old JSON store.** If `data/store.json` is present on first
+start, everything in it is imported once and the file is renamed to
+`store.json.migrated-<date>`. Nothing is lost; delete the old file when you are
+satisfied.
 
-Access is a shared warehouse passcode and a per-client access code. That is
-fine on a home network. If you expose this to the internet, put it behind HTTPS
-and a reverse proxy with authentication (e.g. Cloudflare Access, Tailscale).
+Tables: `clients`, `products` (with `stock`), `orders`, `order_items`,
+`inbound` (incoming deliveries), `notifications`, `sessions`, `settings`.
+The data layer is plain SQL, so moving to MySQL or Postgres later is a
+contained change.
+
+## Security
+
+Built for exposure on the public internet:
+
+- **Sign-in sessions.** Signing in sets an `HttpOnly`, `SameSite=Lax` cookie
+  (`Secure` over HTTPS). Nothing secret is kept in the browser's storage or in
+  URLs. Sessions last 30 days of inactivity (`SESSION_DAYS`) and are stored as
+  a hash, so the database never holds a usable token. Sign out ends the session.
+- **Warehouse passcode** is stored hashed (scrypt) and can be changed on the
+  warehouse Clients tab; doing so signs out every other warehouse device.
+  Client access codes are 8 characters from a 32-letter alphabet.
+- **Brute force** is slowed by a per-IP limit of 20 failed sign-ins per
+  15 minutes.
+- **Cross-site requests** are blocked twice over: the cookie is `SameSite=Lax`,
+  and every state-changing API call must carry a header that cross-site forms
+  cannot set.
+- **Browser hardening**: a strict Content Security Policy (scripts only from
+  this origin, no inline scripts), `X-Frame-Options: DENY`, `nosniff`, a
+  referrer policy, and HSTS over HTTPS.
+- **Uploads** are limited to PDF/PNG/JPG/WebP labels (15 MB) and
+  PNG/JPG/WebP/GIF photos (10 MB), stored under random names, and served with
+  the stored type.
+- **Inputs** are trimmed and length-capped; all SQL is parameterised; error
+  responses never include stack traces.
+
+Behind a host's proxy (cPanel/Passenger, Cloudflare, Render) the app trusts one
+proxy hop for the client IP and HTTPS flag (`TRUST_PROXY=1`, the default).
+Set `TRUST_PROXY=false` only if Node is reached directly.
+
+Still your job: keep the host's SSL certificate valid, choose a strong
+warehouse passcode, and keep `data/` and `uploads/` out of any public web
+folder.
 
 ## Layout
 
 ```
+app.cjs                startup file for cPanel / Passenger (loads src/server.js)
 src/server.js          Express app and all API routes
-src/db.js              atomic JSON store
+src/db.js              SQLite data layer: schema, migrations, JSON import, backups
+src/auth.js            sessions, sign-in rate limit, security headers
+src/passwords.js       scrypt hashing for the warehouse passcode
 src/seed.js            first-run defaults (passcode, demo client)
+src/backup.js          `npm run backup`
 src/services/images.js image lookup providers
 src/services/notify.js client notifications (+ optional webhook)
 public/                the two portals (plain HTML/CSS/JS, no build step)

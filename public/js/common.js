@@ -1,4 +1,4 @@
-// Shared helpers for both portals: DOM, API, feedback, icons.
+// Shared helpers for both portals: DOM, API, feedback, icons, lightbox.
 window.G = (() => {
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -29,11 +29,30 @@ window.G = (() => {
     calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
     chevL: '<path d="M15 6l-6 6 6 6"/>',
     chevR: '<path d="M9 6l6 6-6 6"/>',
+    lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
   };
   function icon(name, label) {
     const a = label ? `role="img" aria-label="${esc(label)}"` : 'aria-hidden="true"';
     return `<svg class="icon" viewBox="0 0 24 24" ${a}>${PATHS[name] || ''}</svg>`;
   }
+
+  // Broken-image fallbacks without inline handlers (the pages run under a strict Content
+  // Security Policy). An <img data-fallback="..."> that fails to load is replaced by an element
+  // with those classes; data-fallback="remove" just removes it.
+  function applyFallback(img) {
+    const f = img.dataset.fallback;
+    if (!f) return;
+    if (f === 'remove') { img.remove(); return; }
+    const el = document.createElement(img.dataset.fallbackTag || 'div');
+    el.className = f;
+    if (img.dataset.fallbackIcon) el.innerHTML = icon(img.dataset.fallbackIcon);
+    else el.textContent = img.dataset.fallbackText || '';
+    if (img.title) el.title = img.title;
+    img.replaceWith(el);
+  }
+  document.addEventListener('error', (e) => { if (e.target && e.target.tagName === 'IMG') applyFallback(e.target); }, true);
+  // Images that already failed before this script ran (e.g. the brand logo in the top bar).
+  for (const img of $$('img[data-fallback]')) if (img.complete && img.naturalWidth === 0) applyFallback(img);
 
   let toastTimer;
   function toast(msg, ms = 3500) {
@@ -45,14 +64,16 @@ window.G = (() => {
     toastTimer = setTimeout(() => el.classList.remove('show'), ms);
   }
 
+  // Same-origin fetch: the session cookie goes along automatically. The X-Requested-With header
+  // is required by the server on every state-changing call (CSRF defence).
   async function api(path, { method = 'GET', body, headers = {}, form } = {}) {
-    const opts = { method, headers: { ...headers } };
+    const opts = { method, headers: { 'X-Requested-With': 'fetch', ...headers }, credentials: 'same-origin' };
     if (form) opts.body = form;
     else if (body !== undefined) { opts.headers['content-type'] = 'application/json'; opts.body = JSON.stringify(body); }
     const res = await fetch(path, opts);
     const ct = res.headers.get('content-type') || '';
     const data = ct.includes('application/json') ? await res.json() : await res.text();
-    if (!res.ok) throw new Error((data && data.error) || `Request failed (${res.status})`);
+    if (!res.ok) { const err = new Error((data && data.error) || `Request failed (${res.status})`); err.status = res.status; throw err; }
     return data;
   }
 
@@ -86,7 +107,7 @@ window.G = (() => {
   function mosaic(items) {
     const shown = items.slice(0, 4);
     const cells = shown.map((it) => it.image
-      ? `<img class="mimg" src="${esc(it.image)}" alt="${esc(it.name)}" loading="lazy" onerror="this.outerHTML='<div class=&quot;mimg placeholder&quot;></div>'">`
+      ? `<img class="mimg" src="${esc(it.image)}" alt="${esc(it.name)}" loading="lazy" data-fallback="mimg placeholder" data-fallback-icon="image">`
       : `<div class="mimg placeholder" title="${esc(it.name)}">${icon('image')}</div>`);
     if (items.length > 4) cells[3] = `<div class="mimg more">+${items.length - 3}</div>`;
     const title = items.map((i) => `${i.quantity}× ${i.name}`).join('\n');
@@ -109,7 +130,7 @@ window.G = (() => {
   }
 
   function thumb(src, alt = '', cls = '') {
-    if (src) return `<img class="thumb ${cls}" src="${esc(src)}" alt="${esc(alt)}" loading="lazy" width="56" height="56" onerror="this.outerHTML='<div class=&quot;thumb placeholder ${cls}&quot;>no image</div>'">`;
+    if (src) return `<img class="thumb ${cls}" src="${esc(src)}" alt="${esc(alt)}" loading="lazy" width="56" height="56" data-fallback="thumb placeholder ${cls}" data-fallback-text="no image">`;
     return `<div class="thumb placeholder ${cls}">no image</div>`;
   }
 
@@ -122,7 +143,7 @@ window.G = (() => {
     lbCur = (i + lbItems.length) % lbItems.length;
     const it = lbItems[lbCur];
     $('.lb-stage', lbEl).innerHTML = it.image
-      ? `<img class="lb-img" src="${esc(it.image)}" alt="${esc(it.name)}" onerror="this.outerHTML='<div class=&quot;lb-ph&quot;>No image</div>'">`
+      ? `<img class="lb-img" src="${esc(it.image)}" alt="${esc(it.name)}" data-fallback="lb-ph" data-fallback-text="No image">`
       : '<div class="lb-ph">No image</div>';
     const meta = [it.sku, it.quantity ? `×${it.quantity}` : ''].filter(Boolean).join(' · ');
     $('.lb-cap', lbEl).innerHTML = `<strong>${esc(it.name)}</strong>${meta ? `<span>${esc(meta)}</span>` : ''}`;

@@ -1,22 +1,23 @@
 (() => {
   const { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, mosaic, fmtDate, statusLabel, thumb, localDay, lightbox } = G;
-  const KEY = 'g3_wh_pass';
-  let pass = localStorage.getItem(KEY) || '';
   let orders = [];
-  const H = () => ({ 'x-wh-pass': pass });
 
-  // ---------- auth ----------
+  // ---------- auth (session cookie set by the server; nothing stored in the browser) ----------
   $('#loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const p = $('#pass').value;
     await busy(e.submitter, async () => {
       try {
         await api('/api/auth/warehouse', { method: 'POST', body: { passcode: p } });
-        pass = p; localStorage.setItem(KEY, pass); enter();
+        $('#pass').value = '';
+        enter();
       } catch (err) { fieldError($('#pass'), err.message); }
     });
   });
-  $('#logout').addEventListener('click', () => { localStorage.removeItem(KEY); location.reload(); });
+  $('#logout').addEventListener('click', async () => {
+    try { await api('/api/auth/logout', { method: 'POST' }); } catch { /* cookie is cleared either way */ }
+    location.reload();
+  });
 
   function enter() {
     $('#login').hidden = true; $('#app').hidden = false; $('#logout').hidden = false;
@@ -70,14 +71,14 @@
 
   async function loadOrders() {
     if (!orders.length) $('#orders').innerHTML = skeleton(3);
-    try { orders = await api(`/api/wh/orders?${queryString()}`, { headers: H() }); }
+    try { orders = await api(`/api/wh/orders?${queryString()}`); }
     catch (err) { toast(err.message); return; }
     renderOrders();
   }
 
   async function loadTypes() {
     try {
-      const types = await api('/api/wh/product-types', { headers: H() });
+      const types = await api('/api/wh/product-types');
       const sel = $('#typeFilter');
       const cur = sel.value;
       sel.innerHTML = '<option value="">All item types</option>' + types.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
@@ -122,10 +123,10 @@
   async function printLabel(id) {
     const o = orders.find((x) => x.id === id);
     if (!o || !o.has_label) { toast('No label on file for this order.'); return; }
-    const w = window.open(`/api/wh/orders/${id}/print-label?pass=${encodeURIComponent(pass)}`, '_blank');
-    if (w) { try { w.addEventListener('load', () => setTimeout(() => w.print(), 400)); } catch { /* cross-origin pdf viewers ignore this; user prints from the tab */ } }
+    const w = window.open(`/api/wh/orders/${id}/print-label`, '_blank');
+    if (w) { try { w.addEventListener('load', () => setTimeout(() => w.print(), 400)); } catch { /* pdf viewers ignore this; user prints from the tab */ } }
     try {
-      await api(`/api/wh/orders/${id}/print`, { method: 'POST', headers: H() });
+      await api(`/api/wh/orders/${id}/print`, { method: 'POST' });
       toast(`Order ${o.order_number} marked printed — client notified.`);
       loadOrders(); loadInventory(); // printing deducts stock
     } catch (err) { toast(err.message); }
@@ -158,7 +159,7 @@
       </div>
       <hr class="sep">
       <div class="row" style="justify-content:flex-end">
-        ${o.has_label ? `<a class="btn" target="_blank" href="/api/wh/orders/${o.id}/print-label?pass=${encodeURIComponent(pass)}">${icon('file')} View label</a>` : '<span class="muted">Waiting for client to upload a label</span>'}
+        ${o.has_label ? `<a class="btn" target="_blank" rel="noopener" href="/api/wh/orders/${o.id}/print-label">${icon('file')} View label</a>` : '<span class="muted">Waiting for client to upload a label</span>'}
         <button class="btn gold" id="printM" type="button" ${o.has_label ? '' : 'disabled'}>${icon('print')} Print label &amp; notify client</button>
       </div>`;
     $('#modalBg').classList.add('open');
@@ -169,7 +170,7 @@
     $$('.setloc', m).forEach((b) => b.addEventListener('click', async () => {
       const loc = prompt('Garage location for this product (e.g. Shelf A2):', b.dataset.cur || '');
       if (loc === null) return;
-      try { await api(`/api/wh/products/${b.dataset.pid}`, { method: 'PATCH', headers: H(), body: { location: loc } }); toast('Location saved.'); await loadOrders(); openPick(id); }
+      try { await api(`/api/wh/products/${b.dataset.pid}`, { method: 'PATCH', body: { location: loc } }); toast('Location saved.'); await loadOrders(); openPick(id); }
       catch (err) { toast(err.message); }
     }));
   }
@@ -179,7 +180,7 @@
   // ---------- clients ----------
   async function loadClients() {
     let clients;
-    try { clients = await api('/api/wh/clients', { headers: H() }); } catch (err) { toast(err.message); return; }
+    try { clients = await api('/api/wh/clients'); } catch (err) { toast(err.message); return; }
     // keep the queue's client filter, and the inventory tab's client selects, in sync
     const opts = clients.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
     for (const [id, first] of [['clientFilter', '<option value="">All clients</option>'], ['ivFilterClient', '<option value="">All clients</option>'], ['ivClient', '']]) {
@@ -203,9 +204,9 @@
       if (typed === null) return;
       if (typed.trim().toLowerCase() !== b.dataset.name.trim().toLowerCase()) { toast('Name did not match. Nothing was deleted.', 5000); return; }
       try {
-        const r = await busy(b, () => api(`/api/wh/clients/${b.dataset.id}`, { method: 'DELETE', headers: H() }));
+        const r = await busy(b, () => api(`/api/wh/clients/${b.dataset.id}`, { method: 'DELETE' }));
         toast(`Deleted ${b.dataset.name} (${r.removed.orders} orders, ${r.removed.products} products).`, 6000);
-        loadClients(); loadTypes(); loadOrders();
+        loadClients(); loadTypes(); loadOrders(); loadInventory();
       } catch (err) { toast(err.message, 6000); }
     }));
   }
@@ -213,18 +214,32 @@
     e.preventDefault();
     busy(e.submitter, async () => {
       try {
-        const c = await api('/api/wh/clients', { method: 'POST', headers: H(), body: { name: $('#cName').value, email: $('#cEmail').value } });
-        toast(`Client created. Access code: ${c.code}`, 6000);
+        const c = await api('/api/wh/clients', { method: 'POST', body: { name: $('#cName').value, email: $('#cEmail').value } });
+        toast(`Client created. Access code: ${c.code}`, 8000);
         $('#cName').value = ''; $('#cEmail').value = '';
         loadClients();
       } catch (err) { fieldError($('#cName'), err.message); }
     });
   });
 
+  // ---------- warehouse passcode ----------
+  $('#passForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const current = $('#pCurrent').value, next = $('#pNew').value, again = $('#pAgain').value;
+    if (next !== again) { fieldError($('#pAgain'), 'The two new passcodes do not match.'); return; }
+    busy(e.submitter, async () => {
+      try {
+        await api('/api/wh/passcode', { method: 'POST', body: { current, next } });
+        toast('Passcode changed. Other signed-in warehouse devices have been signed out.', 7000);
+        $('#pCurrent').value = ''; $('#pNew').value = ''; $('#pAgain').value = '';
+      } catch (err) { fieldError(err.status === 401 ? $('#pCurrent') : $('#pNew'), err.message); }
+    });
+  });
+
   // ---------- inventory ----------
   let inv = { stock: [], inbound: [] };
   async function loadInventory() {
-    try { inv = await api('/api/wh/inventory', { headers: H() }); } catch (err) { toast(err.message); return; }
+    try { inv = await api('/api/wh/inventory'); } catch (err) { toast(err.message); return; }
     renderInventory();
   }
   // The add form's product list follows the chosen client.
@@ -261,7 +276,7 @@
       const q = prompt(`Quantity received for ${b.dataset.name} (expected ${b.dataset.qty}):`, b.dataset.qty);
       if (q === null) return;
       try {
-        await busy(b, () => api(`/api/wh/inbound/${b.dataset.id}/receive`, { method: 'POST', headers: H(), body: { quantity: q } }));
+        await busy(b, () => api(`/api/wh/inbound/${b.dataset.id}/receive`, { method: 'POST', body: { quantity: q } }));
         toast('Received — stock updated and the client has been notified.');
         loadInventory();
       } catch (err) { toast(err.message, 6000); }
@@ -273,15 +288,13 @@
     e.preventDefault();
     const received = $('#ivRecv').checked;
     busy(e.submitter, async () => { try {
-      await api('/api/wh/inbound', { method: 'POST', headers: H(), body: { client_id: $('#ivClient').value, product_id: $('#ivProd').value, quantity: $('#ivQty').value, expected_at: $('#ivDate').value, tracking_id: $('#ivTrack').value, received } });
+      await api('/api/wh/inbound', { method: 'POST', body: { client_id: $('#ivClient').value, product_id: $('#ivProd').value, quantity: $('#ivQty').value, expected_at: $('#ivDate').value, tracking_id: $('#ivTrack').value, received } });
       toast(received ? 'Inventory added to stock and the client has been notified.' : 'Incoming inventory logged.');
       $('#ivQty').value = ''; $('#ivDate').value = ''; $('#ivTrack').value = ''; $('#ivRecv').checked = false;
       loadInventory();
     } catch (err) { fieldError($('#ivQty'), err.message); } });
   });
 
-  // ---------- boot ----------
-  if (pass) {
-    api('/api/auth/warehouse', { method: 'POST', body: { passcode: pass } }).then(enter).catch(() => { localStorage.removeItem(KEY); pass = ''; });
-  }
+  // ---------- boot: a valid session cookie signs in straight away ----------
+  api('/api/wh/me').then(enter).catch(() => { /* not signed in: the login card is already showing */ });
 })();

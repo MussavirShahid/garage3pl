@@ -12,7 +12,7 @@
 </head>
 <body>
   <div class="topbar"><div class="inner">
-    <div class="brand"><img class="logo" src="/brand/logo.png" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'dot'}))"> Zip Packers</div>
+    <div class="brand"><img class="logo" src="/brand/logo.png" alt="" data-fallback="dot" data-fallback-tag="span"> Zip Packers</div>
     <span class="spacer"></span>
     <a class="btn" href="/client.html">Client portal</a>
     <a class="btn" href="/warehouse.html">Warehouse</a>
@@ -33,7 +33,7 @@
         <div class="visual"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg></div>
         <h2>Client portal</h2>
         <p class="tag">Send orders. Attach labels. Stay informed.</p>
-        <p class="desc">Import an Excel sheet or add products by hand with photos, upload a shipping label per order, and get told the moment it prints.</p>
+        <p class="desc">Add products with photos, log incoming inventory, create orders, upload a shipping label per order, and get told the moment it prints.</p>
         <div class="actions"><span class="btn primary">Enter as client</span><span class="link">Learn more</span></div>
       </a>
       <a class="card choice" href="/warehouse.html">
@@ -46,10 +46,11 @@
     </section>
 
     <section class="steps">
-      <div class="step"><div class="n">1</div><h3>Client sends orders</h3><p class="muted small">Excel import or by hand, with photos and the shipping label.</p></div>
+      <div class="step"><div class="n">1</div><h3>Client sends orders</h3><p class="muted small">Products with photos, inventory on its way, orders with the shipping label.</p></div>
       <div class="step"><div class="n">2</div><h3>Warehouse picks by picture</h3><p class="muted small">Photo, shelf location and quantity on every line. Tick as you go.</p></div>
       <div class="step"><div class="n">3</div><h3>Print and notify</h3><p class="muted small">Printing marks the order printed and tells the client instantly.</p></div>
     </section>
   </div>
+  <script src="/js/common.js"></script>
 </body>
 </html>

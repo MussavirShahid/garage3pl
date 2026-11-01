@@ -12,7 +12,7 @@
 </head>
 <body>
   <div class="topbar"><div class="inner">
-    <a class="brand" href="/"><img class="logo" src="/brand/logo.png" alt="" onerror="this.replaceWith(Object.assign(document.createElement(&quot;span&quot;),{className:&quot;dot&quot;}))"> Zip Packers</a>
+    <a class="brand" href="/"><img class="logo" src="/brand/logo.png" alt="" data-fallback="dot" data-fallback-tag="span"> Zip Packers</a>
     <span class="pill">Warehouse</span>
     <span class="spacer"></span>
     <button id="logout" class="btn sm" hidden>Sign out</button>
@@ -114,6 +114,16 @@
           <div class="card">
             <h2>Clients</h2>
             <div id="clients"></div>
+          </div>
+          <div class="card">
+            <h2>Change warehouse passcode</h2>
+            <p class="muted small">At least 8 characters. Every other signed-in warehouse device is signed out when it changes.</p>
+            <form id="passForm" class="stack">
+              <div><label for="pCurrent">Current passcode</label><input type="password" id="pCurrent" autocomplete="current-password" required aria-required="true"></div>
+              <div><label for="pNew">New passcode</label><input type="password" id="pNew" autocomplete="new-password" minlength="8" required aria-required="true"></div>
+              <div><label for="pAgain">New passcode again</label><input type="password" id="pAgain" autocomplete="new-password" minlength="8" required aria-required="true"></div>
+              <button class="btn primary" type="submit">Change passcode</button>
+            </form>
           </div>
         </div>
       </div>

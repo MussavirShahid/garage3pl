@@ -1,11 +1,16 @@
 import express from 'express';
 import multer from 'multer';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, extname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { existsSync, mkdirSync, createReadStream, unlinkSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomInt } from 'node:crypto';
 
 import { db } from './db.js';
+import { hashPassword } from './passwords.js';
+import {
+  createSession, destroySession, destroyOtherWarehouseSessions, requireClient, requireWarehouse,
+  loginLimiter, verifyWarehousePass, securityHeaders, requireFetchHeader, pruneSessions,
+} from './auth.js';
 import { findImages } from './services/images.js';
 import { notifyClient } from './services/notify.js';
 import { ensureSeed } from './seed.js';
@@ -17,557 +22,474 @@ const UP_LABELS = join(ROOT, 'uploads', 'labels');
 const UP_PRODUCTS = join(ROOT, 'uploads', 'products');
 for (const d of [UP_LABELS, UP_PRODUCTS]) mkdirSync(d, { recursive: true });
 
-ensureSeed();
+const seeded = ensureSeed();
+pruneSessions();
 
 const app = express();
-app.use(express.json({ limit: '2mb' }));
-app.use(express.static(PUBLIC_DIR));
-app.use('/files/products', express.static(UP_PRODUCTS));
+app.disable('x-powered-by');
+// Behind a host's proxy (cPanel/Passenger, Cloudflare, Render) the client IP and https flag come
+// from forwarded headers. TRUST_PROXY=false turns that off for a server exposed directly.
+{
+  const tp = process.env.TRUST_PROXY ?? '1';
+  app.set('trust proxy', tp === 'false' ? false : (Number.isNaN(Number(tp)) ? tp : Number(tp)));
+}
+app.use(securityHeaders);
+app.use(express.json({ limit: '256kb' }));
+app.use('/api', requireFetchHeader);
+app.use(express.static(PUBLIC_DIR, { index: 'index.html' }));
+app.use('/files/products', express.static(UP_PRODUCTS, { dotfiles: 'deny', index: false }));
 
-// ---------- uploads ----------
-const labelUpload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _f, cb) => cb(null, UP_LABELS),
-    filename: (_req, file, cb) => cb(null, `${randomUUID()}${extname(file.originalname) || ''}`),
-  }),
-  limits: { fileSize: 15 * 1024 * 1024 },
-});
-const productImgUpload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _f, cb) => cb(null, UP_PRODUCTS),
-    filename: (_req, file, cb) => cb(null, `${randomUUID()}${extname(file.originalname) || '.jpg'}`),
-  }),
-  limits: { fileSize: 10 * 1024 * 1024 },
+// ---------- uploads (type allow-lists, random file names, size caps) ----------
+const LABEL_TYPES = { 'application/pdf': '.pdf', 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp' };
+const IMAGE_TYPES = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'image/gif': '.gif' };
+function uploader(dir, types, maxMb, what) {
+  return multer({
+    storage: multer.diskStorage({
+      destination: (_req, _f, cb) => cb(null, dir),
+      filename: (_req, file, cb) => cb(null, `${randomUUID()}${types[file.mimetype]}`),
+    }),
+    limits: { fileSize: maxMb * 1024 * 1024, files: 1 },
+    fileFilter: (_req, file, cb) => (types[file.mimetype] ? cb(null, true) : cb(new Error(`${what} must be ${Object.values(types).map((e) => e.slice(1).toUpperCase()).join(', ')}.`))),
+  });
+}
+const labelUpload = uploader(UP_LABELS, LABEL_TYPES, 15, 'A label');
+const productImgUpload = uploader(UP_PRODUCTS, IMAGE_TYPES, 10, 'A product photo');
+// Turn multer's errors into a normal 400 instead of a stack trace.
+const upload = (mw) => (req, res, next) => mw(req, res, (err) => {
+  if (!err) return next();
+  res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'That file is too large.' : err.message });
 });
 
 // ---------- helpers ----------
 const now = () => new Date().toISOString();
-const localDay = (iso) => {
-  const d = new Date(iso);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
+const str = (v, max = 200) => String(v ?? '').trim().slice(0, max);
+const isDay = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
-function productFor(clientId, { sku, name }) {
-  if (sku) {
-    const p = db.products.find((x) => x.client_id === clientId && x.sku && x.sku.toLowerCase() === sku.toLowerCase());
-    if (p) return p;
-  }
-  if (name) {
-    const p = db.products.find((x) => x.client_id === clientId && !x.sku && x.name.toLowerCase() === name.toLowerCase());
-    if (p) return p;
-  }
-  return null;
-}
+// Products with their stock figures:
+//   stock     = units on hand (up when a delivery is received, down when an order is first printed)
+//   committed = units promised to orders that are not printed yet
+//   available = stock - committed: what a client may still create orders for
+const PRODUCT_SQL = `SELECT p.*, COALESCE((SELECT SUM(oi.quantity) FROM order_items oi JOIN orders o ON o.id = oi.order_id
+  WHERE oi.product_id = p.id AND o.status IN ('new','label_ready')), 0) AS committed FROM products p`;
+const withStock = (p) => (p ? { ...p, available: p.stock - p.committed } : p);
+const products = (where, ...params) => db.all(`${PRODUCT_SQL} ${where}`, ...params).map(withStock);
+const product = (where, ...params) => withStock(db.get(`${PRODUCT_SQL} ${where}`, ...params));
 
-// ---------- inventory ----------
-// stock      = units physically on hand (goes up when inbound is received, down when an order is first printed)
-// committed  = units promised to orders that are not printed yet
-// available  = stock - committed: what a client may still create orders for
-const stockOf = (p) => Math.max(0, parseInt(p?.stock, 10) || 0);
-function committedFor(productId) {
-  let n = 0;
-  for (const o of db.orders) {
-    if (o.status !== 'new' && o.status !== 'label_ready') continue;
-    for (const it of o.items) if (it.product_id === productId) n += it.quantity;
+function loadOrders(where, orderBy, params, { includeClient = false } = {}) {
+  const rows = db.all(`SELECT o.*${includeClient ? ', c.name AS client_name' : ''} FROM orders o${includeClient ? ' JOIN clients c ON c.id = o.client_id' : ''} ${where} ${orderBy}`, ...params);
+  const byId = new Map(rows.map((o) => [o.id, (o.items = [])]));
+  const ids = [...byId.keys()];
+  for (let i = 0; i < ids.length; i += 400) {
+    const chunk = ids.slice(i, i + 400);
+    const items = db.all(`SELECT oi.order_id, oi.sku, oi.name, oi.quantity, oi.product_id, p.image, p.location, p.description, p.type
+      FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id IN (${chunk.map(() => '?').join(',')}) ORDER BY oi.position, oi.id`, ...chunk);
+    for (const it of items) byId.get(it.order_id).push({ sku: it.sku, name: it.name, quantity: it.quantity, product_id: it.product_id, image: it.image || null, location: it.location || '', description: it.description || '', type: it.type || '' });
   }
-  return n;
+  return rows.map(serializeOrder);
 }
-const availableFor = (p) => stockOf(p) - committedFor(p.id);
-function stockSummary(p) {
-  const stock = stockOf(p), committed = committedFor(p.id);
-  return { stock, committed, available: stock - committed };
-}
-function serializeInbound(r) {
-  const p = db.products.find((x) => x.id === r.product_id);
-  const c = db.clients.find((x) => x.id === r.client_id);
-  return { ...r, product_name: p?.name || 'Deleted product', sku: p?.sku || '', image: p?.image || null, client_name: c?.name || 'Unknown' };
-}
-// Expected deliveries first (soonest expected date first), then received (latest first).
-function inboundSort(a, b) {
-  if (a.status !== b.status) return a.status === 'expected' ? -1 : 1;
-  if (a.status === 'expected') return (a.expected_at || '9999').localeCompare(b.expected_at || '9999') || b.created_at.localeCompare(a.created_at);
-  return (b.received_at || '').localeCompare(a.received_at || '');
-}
-function newInbound({ client_id, product_id, quantity, expected_at, tracking_id, created_by }) {
-  const p = db.products.find((x) => x.id === product_id && x.client_id === client_id);
-  if (!p) return { error: 'Choose a product that belongs to this client.' };
-  const q = parseInt(quantity, 10);
-  if (!Number.isInteger(q) || q < 1) return { error: 'Quantity must be a whole number of at least 1.' };
-  const date = String(expected_at || '').trim();
-  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: 'Expected delivery date must be a calendar date.' };
-  const r = {
-    id: db.uid(), client_id, product_id, quantity: q, expected_at: date, tracking_id: String(tracking_id || '').trim(),
-    status: 'expected', created_by, created_at: now(), received_at: null, received_quantity: null,
-  };
-  db.inbound.push(r);
-  return { inbound: r };
-}
-// Mark an inbound delivery received: stock goes up by the quantity that actually arrived, client is told.
-function receiveInbound(r, quantity) {
-  const q = Number.isInteger(parseInt(quantity, 10)) && parseInt(quantity, 10) >= 1 ? parseInt(quantity, 10) : r.quantity;
-  const p = db.products.find((x) => x.id === r.product_id);
-  r.status = 'received'; r.received_at = now(); r.received_quantity = q;
-  if (p) p.stock = stockOf(p) + q;
-  db.save();
-  notifyClient(r.client_id, {
-    orderId: null,
-    type: 'inventory_received',
-    message: `Inventory received: ${q} × ${p ? p.name : 'product'}${r.tracking_id ? ` (tracking ${r.tracking_id})` : ''}. It is now available to order.`,
-  });
-}
-
-function serializeOrder(order, { includeClient = false } = {}) {
-  const items = order.items.map((it) => {
-    const p = it.product_id ? db.products.find((x) => x.id === it.product_id) : null;
-    return {
-      sku: it.sku,
-      name: it.name,
-      quantity: it.quantity,
-      product_id: it.product_id,
-      image: p?.image || null,
-      location: p?.location || '',
-      description: p?.description || '',
-      type: p?.type || '',
-    };
-  });
+function serializeOrder(o) {
   const out = {
-    id: order.id,
-    client_id: order.client_id,
-    order_number: order.order_number,
-    status: order.status,
-    ship_to: order.ship_to,
-    items,
-    has_label: !!order.label,
-    created_at: order.created_at,
-    printed_at: order.printed_at || null,
+    id: o.id, client_id: o.client_id, order_number: o.order_number, status: o.status, ship_to: o.ship_to,
+    items: o.items, has_label: !!o.label_filename, created_at: o.created_at, printed_at: o.printed_at || null,
   };
-  if (includeClient) {
-    const c = db.clients.find((x) => x.id === order.client_id);
-    out.client_name = c?.name || 'Unknown';
-  }
+  if (o.client_name !== undefined) out.client_name = o.client_name;
   return out;
 }
+const orderById = (id, clientId = null) => loadOrders(`WHERE o.id = ?${clientId ? ' AND o.client_id = ?' : ''}`, '', clientId ? [id, clientId] : [id], { includeClient: !clientId })[0] || null;
 
-// Remove an order's label file from disk (best effort).
-function removeLabelFile(order) {
-  if (!order || !order.label) return;
-  const full = join(UP_LABELS, order.label.filename);
-  try { if (existsSync(full)) unlinkSync(full); } catch { /* best effort */ }
+const INBOUND_SQL = `SELECT r.*, COALESCE(p.name, 'Deleted product') AS product_name, COALESCE(p.sku, '') AS sku, p.image, COALESCE(c.name, 'Unknown') AS client_name
+  FROM inbound r LEFT JOIN products p ON p.id = r.product_id LEFT JOIN clients c ON c.id = r.client_id`;
+// Expected deliveries first (soonest expected date first), then received (latest first).
+const INBOUND_ORDER = `ORDER BY CASE r.status WHEN 'expected' THEN 0 ELSE 1 END,
+  CASE WHEN r.status = 'expected' THEN COALESCE(NULLIF(r.expected_at, ''), '9999') END ASC, r.received_at DESC, r.created_at DESC`;
+const inboundRows = (where, ...params) => db.all(`${INBOUND_SQL} ${where} ${INBOUND_ORDER}`, ...params);
+const inboundById = (id) => db.get(`${INBOUND_SQL} WHERE r.id = ?`, id) || null;
+
+function newInbound({ client_id, product_id, quantity, expected_at, tracking_id, created_by }) {
+  const p = db.get('SELECT id FROM products WHERE id = ? AND client_id = ?', product_id, client_id);
+  if (!p) return { error: 'Choose a product that belongs to this client.' };
+  const q = parseInt(quantity, 10);
+  if (!Number.isInteger(q) || q < 1 || q > 1000000) return { error: 'Quantity must be a whole number of at least 1.' };
+  const date = str(expected_at, 10);
+  if (date && !isDay(date)) return { error: 'Expected delivery date must be a calendar date.' };
+  const id = db.uid();
+  db.run('INSERT INTO inbound (id, client_id, product_id, quantity, expected_at, tracking_id, status, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+    id, client_id, product_id, q, date, str(tracking_id, 100), 'expected', created_by, now());
+  return { id };
 }
-// Remove an uploaded product photo from disk (external URLs are left alone).
-function removeProductImage(product) {
-  if (!product || !product.image || !product.image.startsWith('/files/products/')) return;
-  const full = join(UP_PRODUCTS, product.image.replace('/files/products/', ''));
-  try { if (existsSync(full)) unlinkSync(full); } catch { /* best effort */ }
+// Mark a delivery received: stock goes up by what actually arrived, and the client is told.
+function receiveInbound(id, quantity) {
+  return db.tx(() => {
+    const r = db.get('SELECT * FROM inbound WHERE id = ?', id);
+    if (!r || r.status === 'received') return r;
+    const parsed = parseInt(quantity, 10);
+    const q = Number.isInteger(parsed) && parsed >= 1 ? parsed : r.quantity;
+    db.run('UPDATE inbound SET status = ?, received_at = ?, received_quantity = ? WHERE id = ?', 'received', now(), q, id);
+    db.run('UPDATE products SET stock = stock + ? WHERE id = ?', q, r.product_id);
+    const p = db.get('SELECT name FROM products WHERE id = ?', r.product_id);
+    notifyClient(r.client_id, {
+      type: 'inventory_received',
+      message: `Inventory received: ${q} × ${p ? p.name : 'product'}${r.tracking_id ? ` (tracking ${r.tracking_id})` : ''}. It is now available to order.`,
+    });
+    return r;
+  });
 }
 
-// Kick off best-effort image lookups for products missing an image. Non-blocking.
-async function backfillImages(products) {
-  for (const p of products) {
+const unlinkQuiet = (full) => { try { if (existsSync(full)) unlinkSync(full); } catch { /* best effort */ } };
+const removeLabelFile = (filename) => filename && unlinkQuiet(join(UP_LABELS, filename));
+const removeProductImage = (image) => image && image.startsWith('/files/products/') && unlinkQuiet(join(UP_PRODUCTS, image.replace('/files/products/', '')));
+
+// Best-effort web image lookups for products missing a picture. Non-blocking.
+async function backfillImages(list) {
+  for (const p of list) {
     if (p.image) continue;
     try {
       const { results } = await findImages(p.name, { limit: 1 });
-      // Re-check: the user may have uploaded a picture while the lookup ran.
-      if (results[0] && !p.image) {
-        p.image = results[0].url;
-        p.image_source = results[0].provider;
-        db.save();
-      }
+      // Only fill if nobody set a picture while the lookup ran.
+      if (results[0]) db.run("UPDATE products SET image = ?, image_source = ? WHERE id = ? AND (image IS NULL OR image = '')", results[0].url, results[0].provider, p.id);
     } catch { /* best effort */ }
   }
 }
 
-// ---------- auth middleware ----------
-function warehouseAuth(req, res, next) {
-  const pass = req.get('x-wh-pass') || req.query.pass;
-  if (!pass || pass !== db.settings.warehousePass) {
-    return res.status(401).json({ error: 'Bad warehouse passcode.' });
-  }
-  next();
-}
-function clientAuth(req, res, next) {
-  const code = req.get('x-client-code') || req.query.code;
-  const client = db.clients.find((c) => c.code === code);
-  if (!client) return res.status(401).json({ error: 'Bad client code.' });
-  req.client = client;
-  next();
+function genCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let s = '';
+  for (let i = 0; i < 8; i++) s += chars[randomInt(chars.length)];
+  return db.get('SELECT 1 AS x FROM clients WHERE code = ?', s) ? genCode() : s;
 }
 
 // ================= AUTH =================
-app.post('/api/auth/warehouse', (req, res) => {
-  const { passcode } = req.body || {};
-  if (passcode !== db.settings.warehousePass) return res.status(401).json({ error: 'Incorrect passcode.' });
+app.post('/api/auth/warehouse', loginLimiter, (req, res) => {
+  const passcode = String((req.body || {}).passcode ?? '');
+  if (!passcode || !verifyWarehousePass(passcode)) { req.loginFailed(); return res.status(401).json({ error: 'Incorrect passcode.' }); }
+  req.loginSucceeded();
+  createSession(req, res, { kind: 'warehouse' });
   res.json({ ok: true });
 });
-app.post('/api/auth/client', (req, res) => {
-  const { code } = req.body || {};
-  const client = db.clients.find((c) => c.code === code);
-  if (!client) return res.status(401).json({ error: 'Unknown client code.' });
-  res.json({ ok: true, client: { id: client.id, name: client.name } });
+app.post('/api/auth/client', loginLimiter, (req, res) => {
+  const code = str((req.body || {}).code, 32).toUpperCase();
+  const client = code ? db.get('SELECT id, name FROM clients WHERE code = ?', code) : null;
+  if (!client) { req.loginFailed(); return res.status(401).json({ error: 'Unknown access code.' }); }
+  req.loginSucceeded();
+  createSession(req, res, { kind: 'client', clientId: client.id });
+  res.json({ ok: true, client });
 });
+app.post('/api/auth/logout', (req, res) => { destroySession(req, res); res.json({ ok: true }); });
 
 // ================= CLIENT API =================
-app.get('/api/client/me', clientAuth, (req, res) => {
+app.get('/api/client/me', requireClient, (req, res) => {
   res.json({ id: req.client.id, name: req.client.name, email: req.client.email });
 });
 
-app.get('/api/client/products', clientAuth, (req, res) => {
-  res.json(db.products.filter((p) => p.client_id === req.client.id).map((p) => ({ ...p, ...stockSummary(p) })));
+app.get('/api/client/products', requireClient, (req, res) => {
+  res.json(products('WHERE p.client_id = ? ORDER BY p.created_at', req.client.id));
 });
 
-// manually add a product (image can be a URL here, or uploaded right after)
-app.post('/api/client/products', clientAuth, (req, res) => {
-  const { name, sku, description, location, type, image } = req.body || {};
-  if (!name || !String(name).trim()) return res.status(400).json({ error: 'Product name is required.' });
-  const cleanSku = sku ? String(sku).trim() : null;
-  if (cleanSku && productFor(req.client.id, { sku: cleanSku })) {
-    return res.status(409).json({ error: `A product with SKU ${cleanSku} already exists.` });
+app.post('/api/client/products', requireClient, (req, res) => {
+  const b = req.body || {};
+  const name = str(b.name, 200);
+  if (!name) return res.status(400).json({ error: 'Product name is required.' });
+  const sku = str(b.sku, 64) || null;
+  if (sku && db.get('SELECT 1 AS x FROM products WHERE client_id = ? AND sku = ? COLLATE NOCASE', req.client.id, sku)) {
+    return res.status(409).json({ error: `A product with SKU ${sku} already exists.` });
   }
-  const p = {
-    id: db.uid(),
-    client_id: req.client.id,
-    sku: cleanSku,
-    name: String(name).trim(),
-    description: String(description || '').trim(),
-    location: String(location || '').trim(),
-    type: String(type || '').trim(),
-    image: image ? String(image).trim() : null,
-    image_source: image ? 'manual' : null,
-    stock: 0,
-    created_at: now(),
-  };
-  db.products.push(p);
-  db.save();
+  const image = str(b.image, 2000) || null;
+  const id = db.uid();
+  db.run('INSERT INTO products (id, client_id, sku, name, description, location, type, image, image_source, stock, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+    id, req.client.id, sku, name, str(b.description, 2000), str(b.location, 100), str(b.type, 100), image, image ? 'manual' : null, 0, now());
+  const p = product('WHERE p.id = ?', id);
   if (!p.image) backfillImages([p]);
-  res.json({ ...p, ...stockSummary(p) });
+  res.json(p);
 });
 
-// manually create an order from existing products
-app.post('/api/client/orders', clientAuth, (req, res) => {
-  const { order_number, ship_to, items } = req.body || {};
-  if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'Add at least one item.' });
-  const lines = [];
-  for (const it of items) {
-    const p = db.products.find((x) => x.id === it.product_id && x.client_id === req.client.id);
-    if (!p) return res.status(400).json({ error: 'Unknown product in order.' });
-    const q = Math.max(1, parseInt(it.quantity, 10) || 1);
-    lines.push({ sku: p.sku, name: p.name, quantity: q, product_id: p.id });
+app.patch('/api/client/products/:id', requireClient, (req, res) => {
+  const p = db.get('SELECT id FROM products WHERE id = ? AND client_id = ?', req.params.id, req.client.id);
+  if (!p) return res.status(404).json({ error: 'Product not found.' });
+  const b = req.body || {};
+  const sets = [], vals = [];
+  for (const [k, max] of [['name', 200], ['type', 100], ['location', 100], ['description', 2000], ['image', 2000]]) {
+    if (typeof b[k] === 'string') { sets.push(`${k} = ?`); vals.push(str(b[k], max)); }
   }
-  // Inventory rule: every product in the order must have that many units available
-  // (on hand minus units already promised to other unprinted orders).
-  const want = new Map();
-  for (const l of lines) want.set(l.product_id, (want.get(l.product_id) || 0) + l.quantity);
-  for (const [pid, qty] of want) {
-    const p = db.products.find((x) => x.id === pid);
-    const avail = availableFor(p);
-    if (qty > avail) {
-      return res.status(409).json({ error: avail > 0
-        ? `Not enough inventory for "${p.name}": ${avail} available, ${qty} requested.`
-        : `No available inventory for "${p.name}". Log it on the Inventory tab; once the warehouse receives it you can order it.` });
+  if (typeof b.name === 'string' && !str(b.name)) return res.status(400).json({ error: 'Product name cannot be empty.' });
+  if (typeof b.image === 'string' && str(b.image)) { sets.push('image_source = ?'); vals.push('manual'); }
+  if (sets.length) db.run(`UPDATE products SET ${sets.join(', ')} WHERE id = ?`, ...vals, p.id);
+  res.json(product('WHERE p.id = ?', p.id));
+});
+
+app.post('/api/client/products/:id/image', requireClient, upload(productImgUpload.single('image')), (req, res) => {
+  const p = db.get('SELECT id, image FROM products WHERE id = ? AND client_id = ?', req.params.id, req.client.id);
+  if (!p) { if (req.file) unlinkQuiet(req.file.path); return res.status(404).json({ error: 'Product not found.' }); }
+  if (!req.file) return res.status(400).json({ error: 'No image uploaded.' });
+  removeProductImage(p.image);
+  db.run('UPDATE products SET image = ?, image_source = ? WHERE id = ?', `/files/products/${req.file.filename}`, 'upload', p.id);
+  res.json(product('WHERE p.id = ?', p.id));
+});
+
+app.get('/api/client/products/:id/find-image', requireClient, async (req, res, next) => {
+  try {
+    const p = db.get('SELECT name FROM products WHERE id = ? AND client_id = ?', req.params.id, req.client.id);
+    if (!p) return res.status(404).json({ error: 'Product not found.' });
+    const { query, results } = await findImages(str(req.query.q, 200) || p.name, { limit: 8 });
+    res.json({ query, results });
+  } catch (e) { next(e); }
+});
+
+// Create an order. Every product must have enough available units (checked inside the same
+// write transaction, so two orders cannot both take the last unit).
+app.post('/api/client/orders', requireClient, (req, res) => {
+  const b = req.body || {};
+  if (!Array.isArray(b.items) || !b.items.length || b.items.length > 200) return res.status(400).json({ error: 'Add at least one item.' });
+  const result = db.tx(() => {
+    const lines = [];
+    for (const it of b.items) {
+      const p = db.get('SELECT id, sku, name FROM products WHERE id = ? AND client_id = ?', String(it?.product_id ?? ''), req.client.id);
+      if (!p) return { status: 400, error: 'Unknown product in order.' };
+      lines.push({ product_id: p.id, sku: p.sku, name: p.name, quantity: Math.min(1000000, Math.max(1, parseInt(it.quantity, 10) || 1)) });
     }
-  }
-  let num = String(order_number || '').trim();
-  if (!num) num = `M-${Date.now().toString(36).toUpperCase()}`;
-  if (db.orders.some((o) => o.client_id === req.client.id && o.order_number === num)) {
-    return res.status(409).json({ error: `Order ${num} already exists.` });
-  }
-  const order = {
-    id: db.uid(),
-    client_id: req.client.id,
-    order_number: num,
-    status: 'new',
-    ship_to: String(ship_to || '').trim(),
-    items: lines,
-    label: null,
-    created_at: now(),
-    printed_at: null,
-  };
-  db.orders.push(order);
-  db.save();
-  res.json(serializeOrder(order));
+    const want = new Map();
+    for (const l of lines) want.set(l.product_id, (want.get(l.product_id) || 0) + l.quantity);
+    for (const [pid, qty] of want) {
+      const p = product('WHERE p.id = ?', pid);
+      if (qty > p.available) {
+        return { status: 409, error: p.available > 0
+          ? `Not enough inventory for "${p.name}": ${p.available} available, ${qty} requested.`
+          : `No available inventory for "${p.name}". Log it on the Inventory tab; once the warehouse receives it you can order it.` };
+      }
+    }
+    let num = str(b.order_number, 64);
+    if (!num) num = `M-${Date.now().toString(36).toUpperCase()}`;
+    if (db.get('SELECT 1 AS x FROM orders WHERE client_id = ? AND order_number = ?', req.client.id, num)) return { status: 409, error: `Order ${num} already exists.` };
+    const id = db.uid();
+    db.run('INSERT INTO orders (id, client_id, order_number, status, ship_to, created_at) VALUES (?,?,?,?,?,?)', id, req.client.id, num, 'new', str(b.ship_to, 500), now());
+    lines.forEach((l, i) => db.run('INSERT INTO order_items (order_id, product_id, sku, name, quantity, position) VALUES (?,?,?,?,?,?)', id, l.product_id, l.sku, l.name, l.quantity, i));
+    return { id };
+  });
+  if (result.error) return res.status(result.status).json({ error: result.error });
+  res.json(orderById(result.id, req.client.id));
 });
 
-app.get('/api/client/orders', clientAuth, (req, res) => {
-  const orders = db.orders
-    .filter((o) => o.client_id === req.client.id)
-    .sort((a, b) => b.created_at.localeCompare(a.created_at))
-    .map((o) => serializeOrder(o));
-  res.json(orders);
+app.get('/api/client/orders', requireClient, (req, res) => {
+  res.json(loadOrders('WHERE o.client_id = ?', 'ORDER BY o.created_at DESC', [req.client.id]));
 });
 
-app.get('/api/client/notifications', clientAuth, (req, res) => {
-  const notes = db.notifications
-    .filter((n) => n.client_id === req.client.id)
-    .sort((a, b) => b.created_at.localeCompare(a.created_at));
-  res.json(notes);
+app.post('/api/client/orders/:id/label', requireClient, upload(labelUpload.single('label')), (req, res) => {
+  const o = db.get('SELECT id, status, label_filename FROM orders WHERE id = ? AND client_id = ?', req.params.id, req.client.id);
+  if (!o) { if (req.file) unlinkQuiet(req.file.path); return res.status(404).json({ error: 'Order not found.' }); }
+  if (!req.file) return res.status(400).json({ error: 'No label uploaded.' });
+  removeLabelFile(o.label_filename);
+  db.run('UPDATE orders SET label_filename = ?, label_mime = ?, label_original = ?, status = ? WHERE id = ?',
+    req.file.filename, req.file.mimetype, str(req.file.originalname, 200) || 'label', o.status === 'new' ? 'label_ready' : o.status, o.id);
+  res.json(orderById(o.id, req.client.id));
 });
-app.post('/api/client/notifications/read', clientAuth, (req, res) => {
-  for (const n of db.notifications) if (n.client_id === req.client.id) n.read = true;
-  db.save();
+
+// Delete an order: allowed only until the warehouse has printed it.
+app.delete('/api/client/orders/:id', requireClient, (req, res) => {
+  const o = db.get('SELECT id, order_number, status, label_filename FROM orders WHERE id = ? AND client_id = ?', req.params.id, req.client.id);
+  if (!o) return res.status(404).json({ error: 'Order not found.' });
+  if (o.status === 'printed' || o.status === 'shipped') {
+    return res.status(409).json({ error: `Order ${o.order_number} has already been printed and can no longer be deleted. Contact the warehouse.` });
+  }
+  db.run('DELETE FROM orders WHERE id = ?', o.id);
+  removeLabelFile(o.label_filename);
+  res.json({ ok: true });
+});
+
+app.get('/api/client/notifications', requireClient, (req, res) => {
+  res.json(db.all('SELECT id, client_id, order_id, type, message, read, created_at FROM notifications WHERE client_id = ? ORDER BY created_at DESC LIMIT 200', req.client.id)
+    .map((n) => ({ ...n, read: !!n.read })));
+});
+app.post('/api/client/notifications/read', requireClient, (req, res) => {
+  db.run('UPDATE notifications SET read = 1 WHERE client_id = ? AND read = 0', req.client.id);
   res.json({ ok: true });
 });
 
 // ---------- client inventory ----------
-// Stock per product plus the client's incoming deliveries.
-app.get('/api/client/inventory', clientAuth, (req, res) => {
-  const products = db.products
-    .filter((p) => p.client_id === req.client.id)
-    .map((p) => ({ id: p.id, name: p.name, sku: p.sku, image: p.image, ...stockSummary(p) }))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  const inbound = db.inbound.filter((r) => r.client_id === req.client.id).sort(inboundSort).map(serializeInbound);
-  res.json({ products, inbound });
+app.get('/api/client/inventory', requireClient, (req, res) => {
+  const list = products('WHERE p.client_id = ? ORDER BY p.name', req.client.id)
+    .map((p) => ({ id: p.id, name: p.name, sku: p.sku, image: p.image, stock: p.stock, committed: p.committed, available: p.available }));
+  res.json({ products: list, inbound: inboundRows('WHERE r.client_id = ?', req.client.id) });
 });
-// Log a delivery that is on its way: product, quantity, expected date, tracking ID.
-app.post('/api/client/inbound', clientAuth, (req, res) => {
-  const { product_id, quantity, expected_at, tracking_id } = req.body || {};
-  const r = newInbound({ client_id: req.client.id, product_id, quantity, expected_at, tracking_id, created_by: 'client' });
+app.post('/api/client/inbound', requireClient, (req, res) => {
+  const b = req.body || {};
+  const r = newInbound({ client_id: req.client.id, product_id: String(b.product_id ?? ''), quantity: b.quantity, expected_at: b.expected_at, tracking_id: b.tracking_id, created_by: 'client' });
   if (r.error) return res.status(400).json({ error: r.error });
-  db.save();
-  res.json(serializeInbound(r.inbound));
+  res.json(inboundById(r.id));
 });
-// A client may cancel a delivery only while it is still expected.
-app.delete('/api/client/inbound/:id', clientAuth, (req, res) => {
-  const i = db.inbound.findIndex((r) => r.id === req.params.id && r.client_id === req.client.id);
-  if (i === -1) return res.status(404).json({ error: 'Delivery not found.' });
-  if (db.inbound[i].status !== 'expected') return res.status(409).json({ error: 'This delivery was already received; stock has been updated.' });
-  db.inbound.splice(i, 1);
-  db.save();
-  res.json({ ok: true });
-});
-
-// product edits (client can set/correct image, location, description)
-app.patch('/api/client/products/:id', clientAuth, (req, res) => {
-  const p = db.products.find((x) => x.id === req.params.id && x.client_id === req.client.id);
-  if (!p) return res.status(404).json({ error: 'Product not found.' });
-  for (const k of ['image', 'location', 'description', 'name', 'type']) {
-    if (typeof req.body[k] === 'string') p[k] = req.body[k];
-  }
-  if (req.body.image) p.image_source = 'manual';
-  db.save();
-  res.json(p);
-});
-
-app.post('/api/client/products/:id/image', clientAuth, productImgUpload.single('image'), (req, res) => {
-  const p = db.products.find((x) => x.id === req.params.id && x.client_id === req.client.id);
-  if (!p) return res.status(404).json({ error: 'Product not found.' });
-  if (!req.file) return res.status(400).json({ error: 'No image uploaded.' });
-  p.image = `/files/products/${req.file.filename}`;
-  p.image_source = 'upload';
-  db.save();
-  res.json(p);
-});
-
-// suggest images from the web for manual selection
-app.get('/api/client/products/:id/find-image', clientAuth, async (req, res) => {
-  const p = db.products.find((x) => x.id === req.params.id && x.client_id === req.client.id);
-  if (!p) return res.status(404).json({ error: 'Product not found.' });
-  const { query, results } = await findImages(req.query.q || p.name, { limit: 8 });
-  res.json({ query, results });
-});
-
-// upload shipping label for an order
-app.post('/api/client/orders/:id/label', clientAuth, labelUpload.single('label'), (req, res) => {
-  const o = db.orders.find((x) => x.id === req.params.id && x.client_id === req.client.id);
-  if (!o) return res.status(404).json({ error: 'Order not found.' });
-  if (!req.file) return res.status(400).json({ error: 'No label uploaded.' });
-  o.label = { filename: req.file.filename, mime: req.file.mimetype, original: req.file.originalname };
-  if (o.status === 'new') o.status = 'label_ready';
-  db.save();
-  res.json(serializeOrder(o));
-});
-
-// delete an order: allowed only until the warehouse has printed it
-app.delete('/api/client/orders/:id', clientAuth, (req, res) => {
-  const i = db.orders.findIndex((x) => x.id === req.params.id && x.client_id === req.client.id);
-  if (i === -1) return res.status(404).json({ error: 'Order not found.' });
-  const o = db.orders[i];
-  if (o.status === 'printed' || o.status === 'shipped') {
-    return res.status(409).json({ error: `Order ${o.order_number} has already been printed and can no longer be deleted. Contact the warehouse.` });
-  }
-  removeLabelFile(o);
-  db.orders.splice(i, 1);
-  db.save();
+app.delete('/api/client/inbound/:id', requireClient, (req, res) => {
+  const r = db.get('SELECT id, status FROM inbound WHERE id = ? AND client_id = ?', req.params.id, req.client.id);
+  if (!r) return res.status(404).json({ error: 'Delivery not found.' });
+  if (r.status !== 'expected') return res.status(409).json({ error: 'This delivery was already received; stock has been updated.' });
+  db.run('DELETE FROM inbound WHERE id = ?', r.id);
   res.json({ ok: true });
 });
 
 // ================= WAREHOUSE API =================
-app.get('/api/wh/clients', warehouseAuth, (req, res) => {
-  res.json(db.clients.map((c) => ({
-    id: c.id, name: c.name, email: c.email, code: c.code,
-    orders: db.orders.filter((o) => o.client_id === c.id).length,
-  })));
+app.get('/api/wh/me', requireWarehouse, (_req, res) => res.json({ ok: true }));
+
+// Change the warehouse passcode; every other warehouse device is signed out.
+app.post('/api/wh/passcode', requireWarehouse, (req, res) => {
+  const { current, next: nextPass } = req.body || {};
+  if (!verifyWarehousePass(String(current ?? ''))) return res.status(401).json({ error: 'Current passcode is incorrect.' });
+  const np = String(nextPass ?? '');
+  if (np.length < 8 || np.length > 128) return res.status(400).json({ error: 'New passcode must be at least 8 characters.' });
+  db.setSetting('warehouse_pass_hash', hashPassword(np));
+  destroyOtherWarehouseSessions(req);
+  res.json({ ok: true });
 });
 
-app.post('/api/wh/clients', warehouseAuth, (req, res) => {
-  const { name, email } = req.body || {};
-  if (!name || !name.trim()) return res.status(400).json({ error: 'Client name is required.' });
-  const code = genCode();
-  const client = { id: db.uid(), name: name.trim(), email: (email || '').trim(), code, created_at: now() };
-  db.clients.push(client);
-  db.save();
+app.get('/api/wh/clients', requireWarehouse, (_req, res) => {
+  res.json(db.all('SELECT c.id, c.name, c.email, c.code, (SELECT COUNT(*) FROM orders o WHERE o.client_id = c.id) AS orders FROM clients c ORDER BY c.name'));
+});
+app.post('/api/wh/clients', requireWarehouse, (req, res) => {
+  const b = req.body || {};
+  const name = str(b.name, 200);
+  if (!name) return res.status(400).json({ error: 'Client name is required.' });
+  const client = { id: db.uid(), name, email: str(b.email, 200), code: genCode(), created_at: now() };
+  db.run('INSERT INTO clients (id, name, email, code, created_at) VALUES (?,?,?,?,?)', client.id, client.name, client.email, client.code, client.created_at);
   res.json(client);
 });
-
-// delete a client and everything that belongs to them (orders, products, labels, photos, notifications)
-app.delete('/api/wh/clients/:id', warehouseAuth, (req, res) => {
-  const i = db.clients.findIndex((c) => c.id === req.params.id);
-  if (i === -1) return res.status(404).json({ error: 'Client not found.' });
-  const id = db.clients[i].id;
-  const state = db._state();
-  const gone = { orders: 0, products: 0 };
-  for (const o of state.orders) if (o.client_id === id) { removeLabelFile(o); gone.orders++; }
-  for (const p of state.products) if (p.client_id === id) { removeProductImage(p); gone.products++; }
-  state.orders = state.orders.filter((o) => o.client_id !== id);
-  state.products = state.products.filter((p) => p.client_id !== id);
-  state.inbound = state.inbound.filter((r) => r.client_id !== id);
-  state.notifications = state.notifications.filter((n) => n.client_id !== id);
-  state.clients.splice(i, 1);
-  db.save();
-  res.json({ ok: true, removed: gone });
+// Delete a client and everything that belongs to them (orders, products, labels, photos, deliveries, notifications).
+app.delete('/api/wh/clients/:id', requireWarehouse, (req, res) => {
+  const c = db.get('SELECT id FROM clients WHERE id = ?', req.params.id);
+  if (!c) return res.status(404).json({ error: 'Client not found.' });
+  const labels = db.all('SELECT label_filename FROM orders WHERE client_id = ? AND label_filename IS NOT NULL', c.id);
+  const images = db.all('SELECT image FROM products WHERE client_id = ?', c.id);
+  const removed = {
+    orders: db.get('SELECT COUNT(*) AS n FROM orders WHERE client_id = ?', c.id).n,
+    products: db.get('SELECT COUNT(*) AS n FROM products WHERE client_id = ?', c.id).n,
+  };
+  db.run('DELETE FROM clients WHERE id = ?', c.id); // cascades to products, orders, items, inbound, notifications, sessions
+  for (const l of labels) removeLabelFile(l.label_filename);
+  for (const i of images) removeProductImage(i.image);
+  res.json({ ok: true, removed });
 });
 
-// Queue with filters: status, date range (YYYY-MM-DD), item type; sort newest|oldest.
-app.get('/api/wh/orders', warehouseAuth, (req, res) => {
-  const { status, from, to, type, sort, client } = req.query;
-  let orders = db.orders.slice();
-  if (status && status !== 'all') orders = orders.filter((o) => o.status === status);
-  if (client) orders = orders.filter((o) => o.client_id === client);
-  // Compare on the server's local calendar day, matching the dates people see in the UI.
-  if (from) orders = orders.filter((o) => localDay(o.created_at) >= from);
-  if (to) orders = orders.filter((o) => localDay(o.created_at) <= to);
-  if (type) {
-    const t = String(type).toLowerCase();
-    orders = orders.filter((o) => o.items.some((it) => {
-      const p = db.products.find((x) => x.id === it.product_id);
-      return p && (p.type || '').toLowerCase() === t;
-    }));
-  }
-  const dir = sort === 'oldest' ? 1 : -1;
-  orders.sort((a, b) => dir * a.created_at.localeCompare(b.created_at));
-  res.json(orders.map((o) => serializeOrder(o, { includeClient: true })));
+// Queue with filters: status, client, item type, local-calendar-day range; sort newest|oldest.
+app.get('/api/wh/orders', requireWarehouse, (req, res) => {
+  const q = req.query;
+  const where = [], params = [];
+  if (q.status && q.status !== 'all') { where.push('o.status = ?'); params.push(str(q.status, 20)); }
+  if (q.client) { where.push('o.client_id = ?'); params.push(str(q.client, 64)); }
+  if (isDay(str(q.from, 10))) { where.push("date(o.created_at, 'localtime') >= ?"); params.push(str(q.from, 10)); }
+  if (isDay(str(q.to, 10))) { where.push("date(o.created_at, 'localtime') <= ?"); params.push(str(q.to, 10)); }
+  if (q.type) { where.push('EXISTS (SELECT 1 FROM order_items oi JOIN products p ON p.id = oi.product_id WHERE oi.order_id = o.id AND lower(p.type) = lower(?))'); params.push(str(q.type, 100)); }
+  res.json(loadOrders(where.length ? `WHERE ${where.join(' AND ')}` : '', `ORDER BY o.created_at ${q.sort === 'oldest' ? 'ASC' : 'DESC'} LIMIT 2000`, params, { includeClient: true }));
 });
-
-// distinct item types across all clients, for the warehouse filter
-app.get('/api/wh/product-types', warehouseAuth, (_req, res) => {
-  const types = [...new Set(db.products.map((p) => (p.type || '').trim()).filter(Boolean))];
-  res.json(types.sort((a, b) => a.localeCompare(b)));
+app.get('/api/wh/product-types', requireWarehouse, (_req, res) => {
+  res.json(db.all("SELECT DISTINCT trim(type) AS t FROM products WHERE trim(type) <> '' ORDER BY t COLLATE NOCASE").map((r) => r.t));
 });
-
-app.get('/api/wh/orders/:id', warehouseAuth, (req, res) => {
-  const o = db.orders.find((x) => x.id === req.params.id);
+app.get('/api/wh/orders/:id', requireWarehouse, (req, res) => {
+  const o = orderById(req.params.id);
   if (!o) return res.status(404).json({ error: 'Order not found.' });
-  res.json(serializeOrder(o, { includeClient: true }));
+  res.json(o);
 });
 
-// mark order printed + notify client
-app.post('/api/wh/orders/:id/print', warehouseAuth, (req, res) => {
-  const o = db.orders.find((x) => x.id === req.params.id);
-  if (!o) return res.status(404).json({ error: 'Order not found.' });
-  // First print takes the order's units out of stock. Reprints never deduct again,
-  // and orders printed before inventory existed are left alone too.
-  const firstPrint = o.status !== 'printed' && o.status !== 'shipped' && !o.stock_deducted;
-  if (firstPrint) {
-    for (const it of o.items) {
-      const p = it.product_id ? db.products.find((x) => x.id === it.product_id) : null;
-      if (p) p.stock = Math.max(0, stockOf(p) - it.quantity);
+// Mark an order printed and notify the client. The first print takes its units out of stock;
+// reprints (and orders printed before inventory existed) never deduct again.
+app.post('/api/wh/orders/:id/print', requireWarehouse, (req, res) => {
+  const done = db.tx(() => {
+    const o = db.get('SELECT * FROM orders WHERE id = ?', req.params.id);
+    if (!o) return null;
+    const firstPrint = o.status !== 'printed' && o.status !== 'shipped' && !o.stock_deducted;
+    if (firstPrint) {
+      for (const it of db.all('SELECT product_id, quantity FROM order_items WHERE order_id = ? AND product_id IS NOT NULL', o.id)) {
+        db.run('UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?', it.quantity, it.product_id);
+      }
     }
-    o.stock_deducted = true;
-  }
-  o.status = 'printed';
-  o.printed_at = now();
-  db.save();
-  notifyClient(o.client_id, {
-    orderId: o.id,
-    type: 'printed',
-    message: `Order ${o.order_number} has been printed and is being prepared to ship.`,
+    db.run('UPDATE orders SET status = ?, printed_at = ?, stock_deducted = ? WHERE id = ?', 'printed', now(), firstPrint ? 1 : o.stock_deducted, o.id);
+    notifyClient(o.client_id, { orderId: o.id, type: 'printed', message: `Order ${o.order_number} has been printed and is being prepared to ship.` });
+    return o.id;
   });
-  res.json(serializeOrder(o, { includeClient: true }));
+  if (!done) return res.status(404).json({ error: 'Order not found.' });
+  res.json(orderById(done));
 });
 
-app.patch('/api/wh/products/:id', warehouseAuth, (req, res) => {
-  const p = db.products.find((x) => x.id === req.params.id);
+app.patch('/api/wh/products/:id', requireWarehouse, (req, res) => {
+  const p = db.get('SELECT id FROM products WHERE id = ?', req.params.id);
   if (!p) return res.status(404).json({ error: 'Product not found.' });
-  for (const k of ['image', 'location', 'description', 'type']) {
-    if (typeof req.body[k] === 'string') p[k] = req.body[k];
+  const b = req.body || {};
+  const sets = [], vals = [];
+  for (const [k, max] of [['type', 100], ['location', 100], ['description', 2000], ['image', 2000]]) {
+    if (typeof b[k] === 'string') { sets.push(`${k} = ?`); vals.push(str(b[k], max)); }
   }
-  db.save();
-  res.json(p);
+  if (sets.length) db.run(`UPDATE products SET ${sets.join(', ')} WHERE id = ?`, ...vals, p.id);
+  res.json(product('WHERE p.id = ?', p.id));
 });
 
 // ---------- warehouse inventory ----------
-// Every client's stock per product, plus all incoming deliveries.
-app.get('/api/wh/inventory', warehouseAuth, (req, res) => {
-  const { client, status } = req.query;
-  const stock = db.products
-    .filter((p) => !client || p.client_id === client)
-    .map((p) => {
-      const c = db.clients.find((x) => x.id === p.client_id);
-      return { client_id: p.client_id, client_name: c?.name || 'Unknown', product_id: p.id, name: p.name, sku: p.sku, image: p.image, ...stockSummary(p) };
-    })
-    .sort((a, b) => a.client_name.localeCompare(b.client_name) || a.name.localeCompare(b.name));
-  const inbound = db.inbound
-    .filter((r) => (!client || r.client_id === client) && (!status || status === 'all' || r.status === status))
-    .sort(inboundSort)
-    .map(serializeInbound);
-  res.json({ stock, inbound });
+app.get('/api/wh/inventory', requireWarehouse, (req, res) => {
+  const client = str(req.query.client, 64), status = str(req.query.status, 20);
+  const stock = db.all(`${PRODUCT_SQL} JOIN clients c ON c.id = p.client_id ${client ? 'WHERE p.client_id = ?' : ''} ORDER BY c.name, p.name`, ...(client ? [client] : []))
+    .map(withStock)
+    .map((p) => ({ client_id: p.client_id, client_name: db.get('SELECT name FROM clients WHERE id = ?', p.client_id)?.name || 'Unknown', product_id: p.id, name: p.name, sku: p.sku, image: p.image, stock: p.stock, committed: p.committed, available: p.available }));
+  const where = [], params = [];
+  if (client) { where.push('r.client_id = ?'); params.push(client); }
+  if (status && status !== 'all') { where.push('r.status = ?'); params.push(status); }
+  res.json({ stock, inbound: inboundRows(where.length ? `WHERE ${where.join(' AND ')}` : '', ...params) });
 });
-// Warehouse logs a delivery for a client; with received=true it goes straight into stock.
-app.post('/api/wh/inbound', warehouseAuth, (req, res) => {
-  const { client_id, product_id, quantity, expected_at, tracking_id, received } = req.body || {};
-  if (!db.clients.some((c) => c.id === client_id)) return res.status(400).json({ error: 'Choose a client.' });
-  const r = newInbound({ client_id, product_id, quantity, expected_at, tracking_id, created_by: 'warehouse' });
+app.post('/api/wh/inbound', requireWarehouse, (req, res) => {
+  const b = req.body || {};
+  const client_id = str(b.client_id, 64);
+  if (!db.get('SELECT 1 AS x FROM clients WHERE id = ?', client_id)) return res.status(400).json({ error: 'Choose a client.' });
+  const r = db.tx(() => {
+    const made = newInbound({ client_id, product_id: str(b.product_id, 64), quantity: b.quantity, expected_at: b.expected_at, tracking_id: b.tracking_id, created_by: 'warehouse' });
+    if (made.error) return made;
+    if (b.received === true || b.received === 'true') receiveInbound(made.id);
+    return made;
+  });
   if (r.error) return res.status(400).json({ error: r.error });
-  if (received === true || received === 'true') receiveInbound(r.inbound, r.inbound.quantity);
-  db.save();
-  res.json(serializeInbound(r.inbound));
+  res.json(inboundById(r.id));
 });
-// Mark a delivery received. Optional quantity if what arrived differs from what was expected.
-app.post('/api/wh/inbound/:id/receive', warehouseAuth, (req, res) => {
-  const r = db.inbound.find((x) => x.id === req.params.id);
+app.post('/api/wh/inbound/:id/receive', requireWarehouse, (req, res) => {
+  const r = db.get('SELECT id, status FROM inbound WHERE id = ?', req.params.id);
   if (!r) return res.status(404).json({ error: 'Delivery not found.' });
   if (r.status === 'received') return res.status(409).json({ error: 'Already received.' });
-  receiveInbound(r, (req.body || {}).quantity);
-  res.json(serializeInbound(r));
+  receiveInbound(r.id, (req.body || {}).quantity);
+  res.json(inboundById(r.id));
 });
 
-// ---------- label file streaming (query-param auth so it works in a print tab) ----------
-function streamLabel(order, res) {
-  if (!order || !order.label) { res.status(404).send('No label on file.'); return; }
-  const full = join(UP_LABELS, order.label.filename);
+// ---------- label files (served to the owning client and the warehouse; cookies work in a new tab) ----------
+function streamLabel(o, res) {
+  if (!o || !o.label_filename) { res.status(404).send('No label on file.'); return; }
+  const full = join(UP_LABELS, o.label_filename);
   if (!existsSync(full)) { res.status(404).send('Label file missing.'); return; }
-  res.setHeader('Content-Type', order.label.mime || 'application/octet-stream');
-  res.setHeader('Content-Disposition', `inline; filename="${order.label.original || 'label'}"`);
+  res.removeHeader('Content-Security-Policy'); // a bare PDF/image response, not a page
+  res.setHeader('Content-Type', LABEL_TYPES[o.label_mime] ? o.label_mime : 'application/octet-stream');
+  res.setHeader('Content-Disposition', `inline; filename="${String(o.label_original || 'label').replace(/[^\w.\- ]/g, '_')}"`);
   createReadStream(full).pipe(res);
 }
-app.get('/api/wh/orders/:id/label', warehouseAuth, (req, res) => {
-  streamLabel(db.orders.find((x) => x.id === req.params.id), res);
-});
-app.get('/api/client/orders/:id/label', clientAuth, (req, res) => {
-  streamLabel(db.orders.find((x) => x.id === req.params.id && x.client_id === req.client.id), res);
-});
-
-// ---------- printable label: the original file, exactly as the client uploaded it ----------
-app.get('/api/wh/orders/:id/print-label', warehouseAuth, (req, res) => {
-  streamLabel(db.orders.find((x) => x.id === req.params.id), res);
-});
+const labelCols = 'SELECT id, label_filename, label_mime, label_original FROM orders';
+app.get('/api/client/orders/:id/label', requireClient, (req, res) => streamLabel(db.get(`${labelCols} WHERE id = ? AND client_id = ?`, req.params.id, req.client.id), res));
+app.get('/api/wh/orders/:id/label', requireWarehouse, (req, res) => streamLabel(db.get(`${labelCols} WHERE id = ?`, req.params.id), res));
+// The printable label is the client's file exactly as uploaded.
+app.get('/api/wh/orders/:id/print-label', requireWarehouse, (req, res) => streamLabel(db.get(`${labelCols} WHERE id = ?`, req.params.id), res));
 
 // ---------- misc ----------
-function genCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let s = '';
-  for (let i = 0; i < 6; i++) s += chars[Math.floor(Math.random() * chars.length)];
-  return db.clients.some((c) => c.code === s) ? genCode() : s;
-}
-
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
+app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found.' }));
+// Never leak stack traces to the browser.
+app.use((err, _req, res, next) => {
+  if (res.headersSent) return next(err);
+  if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid request body.' });
+  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Request is too large.' });
+  console.error('[server]', err);
+  res.status(500).json({ error: 'Something went wrong.' });
+});
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`\n  Zip Packers running:  http://localhost:${PORT}`);
-  console.log(`  Warehouse passcode:  ${db.settings.warehousePass}`);
-  const demo = db.clients.find((c) => c.name === 'Demo Client');
+  console.log(`  Database:            ${db.file} (${db.driver})`);
+  if (seeded.usingDefaultPasscode) console.log('  Warehouse passcode:  "warehouse" (the default) — change it on the warehouse Clients tab before going live.');
+  const demo = db.get("SELECT code FROM clients WHERE name = 'Demo Client'");
   if (demo) console.log(`  Demo client code:    ${demo.code}`);
   console.log('');
-  // Catch up on any products still missing a picture (non-blocking, best effort).
-  backfillImages(db.products.filter((p) => !p.image));
+  backfillImages(db.all("SELECT id, name, image FROM products WHERE image IS NULL OR image = ''"));
+  // Housekeeping: a daily database backup (AUTO_BACKUP_HOURS=0 disables) and expired-session cleanup.
+  const hours = Number(process.env.AUTO_BACKUP_HOURS ?? 24);
+  if (hours > 0) {
+    db.backupIfStale(hours);
+    setInterval(() => db.backupIfStale(hours), 60 * 60 * 1000).unref();
+  }
+  setInterval(pruneSessions, 60 * 60 * 1000).unref();
 });

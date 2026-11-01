@@ -1,30 +1,29 @@
 (() => {
   const { $, $$, esc, toast, api, busy, fieldError, skeleton, icon, mosaic, fmtDate, statusLabel, thumb, localDay, lightbox } = G;
-  const KEY = 'g3_client_code';
-  let code = localStorage.getItem(KEY) || '';
   let orders = [], products = [], notifs = [];
   let dateRange = 'all'; // all | today | yesterday | range
-  const H = () => ({ 'x-client-code': code });
 
-  // ---------- auth ----------
+  // ---------- auth (session cookie set by the server; nothing stored in the browser) ----------
   $('#loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const c = $('#code').value.trim().toUpperCase();
     await busy(e.submitter, async () => {
       try {
         const r = await api('/api/auth/client', { method: 'POST', body: { code: c } });
-        code = c; localStorage.setItem(KEY, code);
         $('#who').textContent = r.client.name;
         enter();
       } catch (err) { fieldError($('#code'), err.message); }
     });
   });
-  $('#logout').addEventListener('click', () => { localStorage.removeItem(KEY); location.reload(); });
+  $('#logout').addEventListener('click', async () => {
+    try { await api('/api/auth/logout', { method: 'POST' }); } catch { /* cookie is cleared either way */ }
+    location.reload();
+  });
 
   async function enter() {
     $('#login').hidden = true; $('#app').hidden = false; $('#logout').hidden = false;
     await refreshAll();
-    setInterval(loadNotifs, 15000); // poll for "printed" notifications
+    setInterval(loadNotifs, 15000); // poll for "printed" and "received" notifications
   }
 
   // ---------- tabs ----------
@@ -64,7 +63,7 @@
   // ---------- orders ----------
   async function loadOrders() {
     if (!orders.length) $('#orders').innerHTML = skeleton(3);
-    orders = await api('/api/client/orders', { headers: H() });
+    try { orders = await api('/api/client/orders'); } catch (err) { toast(err.message); return; }
     renderOrders();
   }
   function renderOrders() {
@@ -83,7 +82,7 @@
         <p class="order-fine">${o.ship_to ? esc(o.ship_to) : 'No ship-to address yet'}<br>${esc(fmtDate(o.created_at))}${o.printed_at ? `<br>Printed ${esc(fmtDate(o.printed_at))}` : ''}</p>
         <div class="order-actions">
           <label class="btn ${o.has_label ? '' : 'primary'}" style="margin:0;display:inline-flex">${icon('upload')} ${o.has_label ? 'Replace label' : 'Upload label'}<input type="file" accept=".pdf,image/*" hidden data-order="${o.id}" class="labelInput"></label>
-          ${o.has_label ? `<a class="link" target="_blank" href="/api/client/orders/${o.id}/label?code=${encodeURIComponent(code)}">View label</a>` : ''}
+          ${o.has_label ? `<a class="link" target="_blank" rel="noopener" href="/api/client/orders/${o.id}/label">View label</a>` : ''}
           ${canDelete(o) ? `<button class="link danger delOrder" type="button" data-id="${o.id}" data-num="${esc(o.order_number)}" aria-label="Delete order ${esc(o.order_number)}">Delete</button>` : ''}
         </div>
       </article>`; }).join('')}</div>`;
@@ -97,23 +96,23 @@
     }));
     $$('.delOrder', el).forEach((b) => b.addEventListener('click', async () => {
       if (!confirm(`Delete order ${b.dataset.num}? This removes its items and label and cannot be undone.`)) return;
-      try { await busy(b, () => api(`/api/client/orders/${b.dataset.id}`, { method: 'DELETE', headers: H() })); toast(`Order ${b.dataset.num} deleted.`); orders = orders.filter((o) => o.id !== b.dataset.id); renderOrders(); loadProducts(); loadInventory(); }
+      try { await busy(b, () => api(`/api/client/orders/${b.dataset.id}`, { method: 'DELETE' })); toast(`Order ${b.dataset.num} deleted.`); orders = orders.filter((o) => o.id !== b.dataset.id); renderOrders(); loadProducts(); loadInventory(); }
       catch (err) { toast(err.message, 6000); loadOrders(); }
     }));
     $$('.labelInput', el).forEach((inp) => inp.addEventListener('change', async () => {
       if (!inp.files[0]) return;
       const form = new FormData(); form.append('label', inp.files[0]);
       try {
-        await api(`/api/client/orders/${inp.dataset.order}/label`, { method: 'POST', form, headers: H() });
+        await api(`/api/client/orders/${inp.dataset.order}/label`, { method: 'POST', form });
         toast('Shipping label uploaded.'); loadOrders();
-      } catch (err) { toast(err.message); }
+      } catch (err) { toast(err.message, 6000); }
     }));
   }
 
   // ---------- products ----------
   async function loadProducts() {
     if (!products.length) $('#products').innerHTML = '<div style="grid-column:1/-1">' + skeleton(2) + '</div>';
-    products = await api('/api/client/products', { headers: H() });
+    try { products = await api('/api/client/products'); } catch (err) { toast(err.message); return; }
     renderProducts();
     renderOrders();
   }
@@ -139,7 +138,7 @@
   // ---------- inventory ----------
   let inv = { products: [], inbound: [] };
   async function loadInventory() {
-    try { inv = await api('/api/client/inventory', { headers: H() }); } catch (err) { toast(err.message); return; }
+    try { inv = await api('/api/client/inventory'); } catch (err) { toast(err.message); return; }
     renderInventory();
   }
   function renderInventory() {
@@ -165,14 +164,14 @@
       </div>`).join('')}</div>`;
     $$('.cancelIn', el).forEach((b) => b.addEventListener('click', async () => {
       if (!confirm('Cancel this incoming delivery?')) return;
-      try { await busy(b, () => api(`/api/client/inbound/${b.dataset.id}`, { method: 'DELETE', headers: H() })); toast('Delivery cancelled.'); loadInventory(); }
+      try { await busy(b, () => api(`/api/client/inbound/${b.dataset.id}`, { method: 'DELETE' })); toast('Delivery cancelled.'); loadInventory(); }
       catch (err) { toast(err.message, 6000); }
     }));
   }
   $('#inForm').addEventListener('submit', (e) => {
     e.preventDefault();
     busy(e.submitter, async () => { try {
-      await api('/api/client/inbound', { method: 'POST', headers: H(), body: { product_id: $('#inProd').value, quantity: $('#inQty').value, expected_at: $('#inDate').value, tracking_id: $('#inTrack').value } });
+      await api('/api/client/inbound', { method: 'POST', body: { product_id: $('#inProd').value, quantity: $('#inQty').value, expected_at: $('#inDate').value, tracking_id: $('#inTrack').value } });
       toast('Incoming inventory logged. The warehouse will mark it received.');
       $('#inQty').value = ''; $('#inDate').value = ''; $('#inTrack').value = '';
       loadInventory();
@@ -208,25 +207,25 @@
     $('#closeM').onclick = closeModal;
     $('#saveP').onclick = () => busy($('#saveP'), async () => {
       try {
-        await api(`/api/client/products/${p.id}`, { method: 'PATCH', headers: H(), body: { location: $('#pLoc').value, description: $('#pDesc').value, image: $('#pImg').value, type: $('#pType').value } });
+        await api(`/api/client/products/${p.id}`, { method: 'PATCH', body: { location: $('#pLoc').value, description: $('#pDesc').value, image: $('#pImg').value, type: $('#pType').value } });
         toast('Saved.'); closeModal(); loadProducts();
       } catch (err) { toast(err.message); }
     });
     $('#upImg').onchange = async (e) => {
       if (!e.target.files[0]) return;
       const form = new FormData(); form.append('image', e.target.files[0]);
-      try { await api(`/api/client/products/${p.id}/image`, { method: 'POST', form, headers: H() }); toast('Image uploaded.'); closeModal(); loadProducts(); }
-      catch (err) { toast(err.message); }
+      try { await api(`/api/client/products/${p.id}/image`, { method: 'POST', form }); toast('Image uploaded.'); closeModal(); loadProducts(); }
+      catch (err) { toast(err.message, 6000); }
     };
     $('#findImg').onclick = async () => {
       const box = $('#imgResults');
       box.innerHTML = '<span class="muted">Searching the web…</span>';
       try {
-        const r = await api(`/api/client/products/${p.id}/find-image`, { headers: H() });
+        const r = await api(`/api/client/products/${p.id}/find-image`);
         if (!r.results.length) { box.innerHTML = '<span class="muted">No images found. Try uploading one.</span>'; return; }
-        box.innerHTML = `<p class="muted" style="margin:0 0 8px">Click a picture to use it for "${esc(r.query)}":</p><div class="imgpick">${r.results.map((x) => `<img src="${esc(x.thumbnail)}" data-url="${esc(x.url)}" title="${esc(x.title)}" onerror="this.remove()">`).join('')}</div>`;
+        box.innerHTML = `<p class="muted" style="margin:0 0 8px">Click a picture to use it for "${esc(r.query)}":</p><div class="imgpick">${r.results.map((x) => `<img src="${esc(x.thumbnail)}" data-url="${esc(x.url)}" title="${esc(x.title)}" alt="" data-fallback="remove">`).join('')}</div>`;
         $$('.imgpick img', box).forEach((img) => img.addEventListener('click', async () => {
-          try { await api(`/api/client/products/${p.id}`, { method: 'PATCH', headers: H(), body: { image: img.dataset.url } }); toast('Image set.'); closeModal(); loadProducts(); }
+          try { await api(`/api/client/products/${p.id}`, { method: 'PATCH', body: { image: img.dataset.url } }); toast('Image set.'); closeModal(); loadProducts(); }
           catch (err) { toast(err.message); }
         }));
       } catch (err) { box.innerHTML = `<span class="muted">${esc(err.message)}</span>`; }
@@ -262,13 +261,13 @@
       const file = $('#npFile').files[0];
       const imgUrl = $('#npImg').value.trim();
       busy(e.submitter, async () => { try {
-        const p = await api('/api/client/products', { method: 'POST', headers: H(), body: {
+        const p = await api('/api/client/products', { method: 'POST', body: {
           name: $('#npName').value, sku: $('#npSku').value, type: $('#npType').value,
           description: $('#npDesc').value, image: file ? '' : imgUrl,
         } });
         if (file) {
           const form = new FormData(); form.append('image', file);
-          await api(`/api/client/products/${p.id}/image`, { method: 'POST', form, headers: H() });
+          await api(`/api/client/products/${p.id}/image`, { method: 'POST', form });
         }
         toast('Product added.'); closeModal(); await loadProducts();
         if (!file && !imgUrl) setTimeout(loadProducts, 12000); // picture lookup runs in the background
@@ -307,10 +306,10 @@
       const items = $$('.lineRow', lines).map((r) => ({ product_id: $('.lineProd', r).value, quantity: $('.lineQty', r).value }));
       const label = $('#noLabel').files[0];
       busy(e.submitter, async () => { try {
-        const o = await api('/api/client/orders', { method: 'POST', headers: H(), body: { order_number: $('#noNum').value, ship_to: $('#noShip').value, items } });
+        const o = await api('/api/client/orders', { method: 'POST', body: { order_number: $('#noNum').value, ship_to: $('#noShip').value, items } });
         if (label) {
           const form = new FormData(); form.append('label', label);
-          await api(`/api/client/orders/${o.id}/label`, { method: 'POST', form, headers: H() });
+          await api(`/api/client/orders/${o.id}/label`, { method: 'POST', form });
         }
         toast(`Order ${o.order_number} created${label ? ' with its label' : ''}.`); closeModal(); loadOrders(); loadProducts(); loadInventory();
       } catch (err) { fieldError($('#noNum'), err.message); } });
@@ -320,7 +319,7 @@
   // ---------- notifications ----------
   async function loadNotifs() {
     const prevUnread = notifs.filter((n) => !n.read).length;
-    notifs = await api('/api/client/notifications', { headers: H() });
+    try { notifs = await api('/api/client/notifications'); } catch { return; }
     const unread = notifs.filter((n) => !n.read).length;
     const b = $('#unread'); b.textContent = unread; b.hidden = unread === 0;
     if (unread > prevUnread && prevUnread !== undefined && notifs.length) toast(notifs[0].message, 5000);
@@ -329,20 +328,18 @@
   }
   function renderNotifs() {
     const el = $('#notifs');
-    if (!notifs.length) { el.innerHTML = `<div class="empty">${icon('bell')}<strong>No notifications yet</strong><span>You will be told here the moment the warehouse prints one of your orders.</span></div>`; return; }
+    if (!notifs.length) { el.innerHTML = `<div class="empty">${icon('bell')}<strong>No notifications yet</strong><span>You will be told here the moment the warehouse prints one of your orders or receives your inventory.</span></div>`; return; }
     el.innerHTML = notifs.map((n) => `<div class="notif ${n.read ? '' : 'unread'}"><div>${esc(n.message)}</div><time>${esc(fmtDate(n.created_at))}</time></div>`).join('');
   }
   async function markRead() {
     if (!notifs.some((n) => !n.read)) return;
-    await api('/api/client/notifications/read', { method: 'POST', headers: H() });
+    await api('/api/client/notifications/read', { method: 'POST' });
     loadNotifs();
   }
   $('#markRead').addEventListener('click', markRead);
 
-  // ---------- boot ----------
-  if (code) {
-    api('/api/client/me', { headers: H() })
-      .then((me) => { $('#who').textContent = me.name; enter(); })
-      .catch(() => { localStorage.removeItem(KEY); code = ''; });
-  }
+  // ---------- boot: a valid session cookie signs in straight away ----------
+  api('/api/client/me')
+    .then((me) => { $('#who').textContent = me.name; enter(); })
+    .catch(() => { /* not signed in: the login card is already showing */ });
 })();
