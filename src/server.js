@@ -61,6 +61,63 @@ function productFor(clientId, { sku, name }) {
   return null;
 }
 
+// ---------- inventory ----------
+// stock      = units physically on hand (goes up when inbound is received, down when an order is first printed)
+// committed  = units promised to orders that are not printed yet
+// available  = stock - committed: what a client may still create orders for
+const stockOf = (p) => Math.max(0, parseInt(p?.stock, 10) || 0);
+function committedFor(productId) {
+  let n = 0;
+  for (const o of db.orders) {
+    if (o.status !== 'new' && o.status !== 'label_ready') continue;
+    for (const it of o.items) if (it.product_id === productId) n += it.quantity;
+  }
+  return n;
+}
+const availableFor = (p) => stockOf(p) - committedFor(p.id);
+function stockSummary(p) {
+  const stock = stockOf(p), committed = committedFor(p.id);
+  return { stock, committed, available: stock - committed };
+}
+function serializeInbound(r) {
+  const p = db.products.find((x) => x.id === r.product_id);
+  const c = db.clients.find((x) => x.id === r.client_id);
+  return { ...r, product_name: p?.name || 'Deleted product', sku: p?.sku || '', image: p?.image || null, client_name: c?.name || 'Unknown' };
+}
+// Expected deliveries first (soonest expected date first), then received (latest first).
+function inboundSort(a, b) {
+  if (a.status !== b.status) return a.status === 'expected' ? -1 : 1;
+  if (a.status === 'expected') return (a.expected_at || '9999').localeCompare(b.expected_at || '9999') || b.created_at.localeCompare(a.created_at);
+  return (b.received_at || '').localeCompare(a.received_at || '');
+}
+function newInbound({ client_id, product_id, quantity, expected_at, tracking_id, created_by }) {
+  const p = db.products.find((x) => x.id === product_id && x.client_id === client_id);
+  if (!p) return { error: 'Choose a product that belongs to this client.' };
+  const q = parseInt(quantity, 10);
+  if (!Number.isInteger(q) || q < 1) return { error: 'Quantity must be a whole number of at least 1.' };
+  const date = String(expected_at || '').trim();
+  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: 'Expected delivery date must be a calendar date.' };
+  const r = {
+    id: db.uid(), client_id, product_id, quantity: q, expected_at: date, tracking_id: String(tracking_id || '').trim(),
+    status: 'expected', created_by, created_at: now(), received_at: null, received_quantity: null,
+  };
+  db.inbound.push(r);
+  return { inbound: r };
+}
+// Mark an inbound delivery received: stock goes up by the quantity that actually arrived, client is told.
+function receiveInbound(r, quantity) {
+  const q = Number.isInteger(parseInt(quantity, 10)) && parseInt(quantity, 10) >= 1 ? parseInt(quantity, 10) : r.quantity;
+  const p = db.products.find((x) => x.id === r.product_id);
+  r.status = 'received'; r.received_at = now(); r.received_quantity = q;
+  if (p) p.stock = stockOf(p) + q;
+  db.save();
+  notifyClient(r.client_id, {
+    orderId: null,
+    type: 'inventory_received',
+    message: `Inventory received: ${q} × ${p ? p.name : 'product'}${r.tracking_id ? ` (tracking ${r.tracking_id})` : ''}. It is now available to order.`,
+  });
+}
+
 function serializeOrder(order, { includeClient = false } = {}) {
   const items = order.items.map((it) => {
     const p = it.product_id ? db.products.find((x) => x.id === it.product_id) : null;
@@ -157,7 +214,7 @@ app.get('/api/client/me', clientAuth, (req, res) => {
 });
 
 app.get('/api/client/products', clientAuth, (req, res) => {
-  res.json(db.products.filter((p) => p.client_id === req.client.id));
+  res.json(db.products.filter((p) => p.client_id === req.client.id).map((p) => ({ ...p, ...stockSummary(p) })));
 });
 
 // manually add a product (image can be a URL here, or uploaded right after)
@@ -178,12 +235,13 @@ app.post('/api/client/products', clientAuth, (req, res) => {
     type: String(type || '').trim(),
     image: image ? String(image).trim() : null,
     image_source: image ? 'manual' : null,
+    stock: 0,
     created_at: now(),
   };
   db.products.push(p);
   db.save();
   if (!p.image) backfillImages([p]);
-  res.json(p);
+  res.json({ ...p, ...stockSummary(p) });
 });
 
 // manually create an order from existing products
@@ -196,6 +254,19 @@ app.post('/api/client/orders', clientAuth, (req, res) => {
     if (!p) return res.status(400).json({ error: 'Unknown product in order.' });
     const q = Math.max(1, parseInt(it.quantity, 10) || 1);
     lines.push({ sku: p.sku, name: p.name, quantity: q, product_id: p.id });
+  }
+  // Inventory rule: every product in the order must have that many units available
+  // (on hand minus units already promised to other unprinted orders).
+  const want = new Map();
+  for (const l of lines) want.set(l.product_id, (want.get(l.product_id) || 0) + l.quantity);
+  for (const [pid, qty] of want) {
+    const p = db.products.find((x) => x.id === pid);
+    const avail = availableFor(p);
+    if (qty > avail) {
+      return res.status(409).json({ error: avail > 0
+        ? `Not enough inventory for "${p.name}": ${avail} available, ${qty} requested.`
+        : `No available inventory for "${p.name}". Log it on the Inventory tab; once the warehouse receives it you can order it.` });
+    }
   }
   let num = String(order_number || '').trim();
   if (!num) num = `M-${Date.now().toString(36).toUpperCase()}`;
@@ -238,6 +309,34 @@ app.post('/api/client/notifications/read', clientAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- client inventory ----------
+// Stock per product plus the client's incoming deliveries.
+app.get('/api/client/inventory', clientAuth, (req, res) => {
+  const products = db.products
+    .filter((p) => p.client_id === req.client.id)
+    .map((p) => ({ id: p.id, name: p.name, sku: p.sku, image: p.image, ...stockSummary(p) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const inbound = db.inbound.filter((r) => r.client_id === req.client.id).sort(inboundSort).map(serializeInbound);
+  res.json({ products, inbound });
+});
+// Log a delivery that is on its way: product, quantity, expected date, tracking ID.
+app.post('/api/client/inbound', clientAuth, (req, res) => {
+  const { product_id, quantity, expected_at, tracking_id } = req.body || {};
+  const r = newInbound({ client_id: req.client.id, product_id, quantity, expected_at, tracking_id, created_by: 'client' });
+  if (r.error) return res.status(400).json({ error: r.error });
+  db.save();
+  res.json(serializeInbound(r.inbound));
+});
+// A client may cancel a delivery only while it is still expected.
+app.delete('/api/client/inbound/:id', clientAuth, (req, res) => {
+  const i = db.inbound.findIndex((r) => r.id === req.params.id && r.client_id === req.client.id);
+  if (i === -1) return res.status(404).json({ error: 'Delivery not found.' });
+  if (db.inbound[i].status !== 'expected') return res.status(409).json({ error: 'This delivery was already received; stock has been updated.' });
+  db.inbound.splice(i, 1);
+  db.save();
+  res.json({ ok: true });
+});
+
 // Excel/CSV import -> products + orders
 app.post('/api/client/import', clientAuth, memUpload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
@@ -253,6 +352,9 @@ app.post('/api/client/import', clientAuth, memUpload.single('file'), (req, res) 
   let productCount = 0;
   const orderMap = new Map(); // key -> order (orders touched by this import)
   const lockedOrders = new Set(); // already printed/shipped: never rewritten by a re-import
+  const newOrderIds = new Set(); // orders created by this import
+  const prevItems = new Map(); // order id -> lines before a re-import rebuilt them
+  const linesSkipped = []; // lines refused because the product has too few available units
   let ordersCreated = 0, ordersUpdated = 0;
 
   for (let i = 0; i < parsed.records.length; i++) {
@@ -270,6 +372,7 @@ app.post('/api/client/import', clientAuth, memUpload.single('file'), (req, res) 
         type: rec.type || '',
         image: null,
         image_source: null,
+        stock: 0,
         created_at: now(),
       };
       db.products.push(product);
@@ -302,6 +405,7 @@ app.post('/api/client/import', clientAuth, memUpload.single('file'), (req, res) 
           printed_at: null,
         };
         db.orders.push(order);
+        newOrderIds.add(order.id);
         ordersCreated++;
       } else if (order.status === 'printed' || order.status === 'shipped') {
         // The sheet is the source of truth only until the order has been printed.
@@ -309,13 +413,38 @@ app.post('/api/client/import', clientAuth, memUpload.single('file'), (req, res) 
         continue;
       } else {
         // Re-import: rebuild this order's lines from the sheet instead of appending duplicates.
+        prevItems.set(order.id, order.items);
         order.items = [];
         ordersUpdated++;
       }
       orderMap.set(key, order);
     }
     if (rec.shipto && !order.ship_to) order.ship_to = rec.shipto;
+    // Inventory rule, same as creating an order by hand: the line must fit within the
+    // product's available units. Lines already accepted in this import sit in unprinted
+    // orders, so they are counted; a re-imported order's old lines were cleared, so they are not.
+    const avail = availableFor(product);
+    if (rec.qty > avail) {
+      linesSkipped.push({ order: orderNumber, sku: rec.sku || '', name: rec.name, qty: rec.qty, available: Math.max(0, avail) });
+      continue;
+    }
     order.items.push({ sku: rec.sku, name: rec.name, quantity: rec.qty, product_id: product.id });
+  }
+
+  // An order with no accepted lines is not saved empty: a new one is dropped, an
+  // existing one keeps the lines it had before this import.
+  let ordersWithoutStock = 0;
+  for (const order of orderMap.values()) {
+    if (order.items.length) continue;
+    ordersWithoutStock++;
+    if (newOrderIds.has(order.id)) {
+      const idx = db.orders.indexOf(order);
+      if (idx !== -1) db.orders.splice(idx, 1);
+      ordersCreated--;
+    } else {
+      order.items = prevItems.get(order.id) || [];
+      ordersUpdated--;
+    }
   }
 
   db.save();
@@ -329,6 +458,8 @@ app.post('/api/client/import', clientAuth, memUpload.single('file'), (req, res) 
     orders_added: ordersCreated,
     orders_updated: ordersUpdated,
     orders_skipped: lockedOrders.size,
+    orders_without_stock: ordersWithoutStock,
+    lines_skipped: linesSkipped,
     catalog_only: !parsed.hasOrders,
     rows: parsed.rowCount,
   });
@@ -418,6 +549,7 @@ app.delete('/api/wh/clients/:id', warehouseAuth, (req, res) => {
   for (const p of state.products) if (p.client_id === id) { removeProductImage(p); gone.products++; }
   state.orders = state.orders.filter((o) => o.client_id !== id);
   state.products = state.products.filter((p) => p.client_id !== id);
+  state.inbound = state.inbound.filter((r) => r.client_id !== id);
   state.notifications = state.notifications.filter((n) => n.client_id !== id);
   state.clients.splice(i, 1);
   db.save();
@@ -461,6 +593,16 @@ app.get('/api/wh/orders/:id', warehouseAuth, (req, res) => {
 app.post('/api/wh/orders/:id/print', warehouseAuth, (req, res) => {
   const o = db.orders.find((x) => x.id === req.params.id);
   if (!o) return res.status(404).json({ error: 'Order not found.' });
+  // First print takes the order's units out of stock. Reprints never deduct again,
+  // and orders printed before inventory existed are left alone too.
+  const firstPrint = o.status !== 'printed' && o.status !== 'shipped' && !o.stock_deducted;
+  if (firstPrint) {
+    for (const it of o.items) {
+      const p = it.product_id ? db.products.find((x) => x.id === it.product_id) : null;
+      if (p) p.stock = Math.max(0, stockOf(p) - it.quantity);
+    }
+    o.stock_deducted = true;
+  }
   o.status = 'printed';
   o.printed_at = now();
   db.save();
@@ -480,6 +622,42 @@ app.patch('/api/wh/products/:id', warehouseAuth, (req, res) => {
   }
   db.save();
   res.json(p);
+});
+
+// ---------- warehouse inventory ----------
+// Every client's stock per product, plus all incoming deliveries.
+app.get('/api/wh/inventory', warehouseAuth, (req, res) => {
+  const { client, status } = req.query;
+  const stock = db.products
+    .filter((p) => !client || p.client_id === client)
+    .map((p) => {
+      const c = db.clients.find((x) => x.id === p.client_id);
+      return { client_id: p.client_id, client_name: c?.name || 'Unknown', product_id: p.id, name: p.name, sku: p.sku, image: p.image, ...stockSummary(p) };
+    })
+    .sort((a, b) => a.client_name.localeCompare(b.client_name) || a.name.localeCompare(b.name));
+  const inbound = db.inbound
+    .filter((r) => (!client || r.client_id === client) && (!status || status === 'all' || r.status === status))
+    .sort(inboundSort)
+    .map(serializeInbound);
+  res.json({ stock, inbound });
+});
+// Warehouse logs a delivery for a client; with received=true it goes straight into stock.
+app.post('/api/wh/inbound', warehouseAuth, (req, res) => {
+  const { client_id, product_id, quantity, expected_at, tracking_id, received } = req.body || {};
+  if (!db.clients.some((c) => c.id === client_id)) return res.status(400).json({ error: 'Choose a client.' });
+  const r = newInbound({ client_id, product_id, quantity, expected_at, tracking_id, created_by: 'warehouse' });
+  if (r.error) return res.status(400).json({ error: r.error });
+  if (received === true || received === 'true') receiveInbound(r.inbound, r.inbound.quantity);
+  db.save();
+  res.json(serializeInbound(r.inbound));
+});
+// Mark a delivery received. Optional quantity if what arrived differs from what was expected.
+app.post('/api/wh/inbound/:id/receive', warehouseAuth, (req, res) => {
+  const r = db.inbound.find((x) => x.id === req.params.id);
+  if (!r) return res.status(404).json({ error: 'Delivery not found.' });
+  if (r.status === 'received') return res.status(409).json({ error: 'Already received.' });
+  receiveInbound(r, (req.body || {}).quantity);
+  res.json(serializeInbound(r));
 });
 
 // ---------- label file streaming (query-param auth so it works in a print tab) ----------

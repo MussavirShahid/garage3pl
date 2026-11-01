@@ -1,5 +1,5 @@
 // Tiny atomic JSON store. Single-process, fine for garage-scale volumes.
-// Collections: clients, products, orders, notifications, settings.
+// Collections: clients, products, orders, inbound (incoming inventory), notifications, settings.
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'data');
 const DB_FILE = join(DATA_DIR, 'store.json');
 
-const EMPTY = { clients: [], products: [], orders: [], notifications: [], settings: {} };
+const EMPTY = { clients: [], products: [], orders: [], inbound: [], notifications: [], settings: {} };
 
 let state;
 
@@ -48,6 +48,7 @@ export const db = {
   get clients() { return state.clients; },
   get products() { return state.products; },
   get orders() { return state.orders; },
+  get inbound() { return state.inbound; },
   get notifications() { return state.notifications; },
   get settings() { return state.settings; },
   uid: () => randomUUID(),

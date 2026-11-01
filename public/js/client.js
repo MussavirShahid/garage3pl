@@ -30,12 +30,13 @@
   // ---------- tabs ----------
   $$('.tab').forEach((t) => t.addEventListener('click', () => {
     $$('.tab').forEach((x) => x.classList.toggle('active', x === t));
-    for (const id of ['orders', 'products', 'notifs']) $('#tab-' + id).hidden = id !== t.dataset.tab;
+    for (const id of ['orders', 'products', 'inventory', 'notifs']) $('#tab-' + id).hidden = id !== t.dataset.tab;
     if (t.dataset.tab === 'notifs') markRead();
+    if (t.dataset.tab === 'inventory') loadInventory();
   }));
 
   async function refreshAll() {
-    await Promise.all([loadOrders(), loadProducts(), loadNotifs()]);
+    await Promise.all([loadOrders(), loadProducts(), loadInventory(), loadNotifs()]);
   }
 
   // ---------- orders: date filter ----------
@@ -96,7 +97,7 @@
     }));
     $$('.delOrder', el).forEach((b) => b.addEventListener('click', async () => {
       if (!confirm(`Delete order ${b.dataset.num}? This removes its items and label and cannot be undone.`)) return;
-      try { await busy(b, () => api(`/api/client/orders/${b.dataset.id}`, { method: 'DELETE', headers: H() })); toast(`Order ${b.dataset.num} deleted.`); orders = orders.filter((o) => o.id !== b.dataset.id); renderOrders(); }
+      try { await busy(b, () => api(`/api/client/orders/${b.dataset.id}`, { method: 'DELETE', headers: H() })); toast(`Order ${b.dataset.num} deleted.`); orders = orders.filter((o) => o.id !== b.dataset.id); renderOrders(); loadProducts(); loadInventory(); }
       catch (err) { toast(err.message, 6000); loadOrders(); }
     }));
     $$('.labelInput', el).forEach((inp) => inp.addEventListener('change', async () => {
@@ -120,7 +121,9 @@
     await busy(e.submitter, async () => { try {
       const r = await api('/api/client/import', { method: 'POST', form, headers: H() });
       const mapped = Object.entries(r.mapping).map(([k, v]) => `${k} ← "${esc(v)}"`).join(', ');
-      out.innerHTML = `Imported <strong>${r.rows}</strong> rows: <strong>${r.orders_added}</strong> orders, <strong>${r.products_added}</strong> new products.${r.catalog_only ? ' (No order column found, so products were added to your catalog only.)' : ''}<br><span style="font-size:12px">Columns detected: ${mapped}</span><br><span style="font-size:12px">Product pictures are being looked up in the background. Refresh Products in a moment.</span>`;
+      const skipped = r.lines_skipped || [];
+      const skipNote = skipped.length ? `<br><span class="danger-text" style="font-size:13px"><strong>${skipped.length} line${skipped.length === 1 ? '' : 's'} skipped</strong> for lack of available inventory: ${skipped.slice(0, 6).map((l) => `${esc(l.name)} ×${l.qty} in order ${esc(l.order)} (${l.available} available)`).join('; ')}${skipped.length > 6 ? '; …' : ''}. Log those deliveries on the Inventory tab and import the sheet again once the warehouse has received them.</span>` : '';
+      out.innerHTML = `Imported <strong>${r.rows}</strong> rows: <strong>${r.orders_added}</strong> orders, <strong>${r.products_added}</strong> new products.${r.catalog_only ? ' (No order column found, so products were added to your catalog only.)' : ''}${skipNote}<br><span style="font-size:12px">Columns detected: ${mapped}</span><br><span style="font-size:12px">Product pictures are being looked up in the background. Refresh Products in a moment.</span>`;
       $('#importFile').value = '';
       await refreshAll();
       setTimeout(loadProducts, 6000);
@@ -147,11 +150,55 @@
         <div style="min-width:0">
           <h3 style="margin:0">${esc(p.name)}</h3>
           <div class="muted" style="font-size:13px">${esc(p.sku || 'no SKU')}${p.type ? ` · ${esc(p.type)}` : ''}</div>
+          <div class="small" style="margin-top:4px"><strong class="${p.available > 0 ? 'ok-text' : 'danger-text'}">${p.available ?? 0} available</strong> <span class="muted">· ${p.stock ?? 0} on hand</span></div>
           <div class="small" style="margin-top:4px">${p.location ? `<span class="loc">${icon('pin')} ${esc(p.location)}</span>` : '<span class="muted">No location set</span>'}</div>
         </div>
       </div>`).join('');
     $$('.tile', el).forEach((t) => t.addEventListener('click', () => openProduct(t.dataset.id)));
   }
+
+  // ---------- inventory ----------
+  let inv = { products: [], inbound: [] };
+  async function loadInventory() {
+    try { inv = await api('/api/client/inventory', { headers: H() }); } catch (err) { toast(err.message); return; }
+    renderInventory();
+  }
+  function renderInventory() {
+    const sel = $('#inProd'); const cur = sel.value;
+    sel.innerHTML = inv.products.length
+      ? inv.products.map((p) => `<option value="${p.id}">${esc(p.name)}${p.sku ? ` (${esc(p.sku)})` : ''}</option>`).join('')
+      : '<option value="">Add a product first (Products tab)</option>';
+    if (inv.products.some((p) => p.id === cur)) sel.value = cur;
+
+    const st = $('#stock');
+    if (!inv.products.length) st.innerHTML = `<div class="empty">${icon('box')}<strong>No products yet</strong><span>Add products on the Products tab, then log incoming inventory here.</span></div>`;
+    else st.innerHTML = `<div class="table-wrap stock-table"><table><thead><tr><th>Product</th><th class="num">On hand</th><th class="num">Reserved</th><th class="num">Available</th></tr></thead><tbody>${inv.products.map((p) => `
+      <tr><td><div class="row" style="gap:10px;flex-wrap:nowrap">${thumb(p.image, p.name)}<div style="min-width:0"><strong>${esc(p.name)}</strong><div class="cell-sub">${esc(p.sku || 'no SKU')}</div></div></div></td><td class="num">${p.stock}</td><td class="num">${p.committed}</td><td class="num"><strong class="${p.available > 0 ? 'ok-text' : 'danger-text'}">${p.available}</strong></td></tr>`).join('')}</tbody></table></div>`;
+
+    const el = $('#inbound');
+    if (!inv.inbound.length) { el.innerHTML = `<div class="empty">${icon('calendar')}<strong>No incoming inventory</strong><span>Log a delivery above with its expected date and tracking ID. The warehouse marks it received and your stock goes up.</span></div>`; return; }
+    el.innerHTML = `<div class="stack">${inv.inbound.map((r) => `
+      <div class="client-row">
+        <div class="grow"><strong>${esc(r.product_name)}</strong> <span class="muted">×${r.quantity}</span><div class="cell-sub">${esc(r.sku || '')}${r.tracking_id ? ` · Tracking ${esc(r.tracking_id)}` : ''}${r.created_by === 'warehouse' ? ' · added by warehouse' : ''}</div></div>
+        <div class="meta"><span class="muted small">Expected</span> <strong>${r.expected_at ? esc(r.expected_at) : '—'}</strong></div>
+        <span class="status ${esc(r.status)}">${r.status === 'received' ? `Received ${esc(fmtDate(r.received_at))}${r.received_quantity !== r.quantity ? ` (×${r.received_quantity})` : ''}` : 'Expected'}</span>
+        ${r.status === 'expected' ? `<button class="btn sm danger cancelIn" type="button" data-id="${r.id}">Cancel</button>` : ''}
+      </div>`).join('')}</div>`;
+    $$('.cancelIn', el).forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('Cancel this incoming delivery?')) return;
+      try { await busy(b, () => api(`/api/client/inbound/${b.dataset.id}`, { method: 'DELETE', headers: H() })); toast('Delivery cancelled.'); loadInventory(); }
+      catch (err) { toast(err.message, 6000); }
+    }));
+  }
+  $('#inForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    busy(e.submitter, async () => { try {
+      await api('/api/client/inbound', { method: 'POST', headers: H(), body: { product_id: $('#inProd').value, quantity: $('#inQty').value, expected_at: $('#inDate').value, tracking_id: $('#inTrack').value } });
+      toast('Incoming inventory logged. The warehouse will mark it received.');
+      $('#inQty').value = ''; $('#inDate').value = ''; $('#inTrack').value = '';
+      loadInventory();
+    } catch (err) { fieldError($('#inQty'), err.message); } });
+  });
 
   function openProduct(id) {
     const p = products.find((x) => x.id === id);
@@ -255,8 +302,10 @@
   $('#newOrder').addEventListener('click', openNewOrder);
   function openNewOrder() {
     if (!products.length) { toast('Add a product first, on the Products tab.'); return; }
+    if (!products.some((p) => p.available > 0)) { toast('No inventory available to order yet. Log incoming inventory on the Inventory tab; once the warehouse receives it you can create orders.', 7000); return; }
     const m = $('#modal');
-    const opts = products.map((p) => `<option value="${p.id}">${esc(p.name)}${p.sku ? ` (${esc(p.sku)})` : ''}</option>`).join('');
+    // Products with nothing available cannot be chosen; the server enforces the same rule.
+    const opts = products.map((p) => `<option value="${p.id}" ${p.available > 0 ? '' : 'disabled'}>${esc(p.name)}${p.sku ? ` (${esc(p.sku)})` : ''} — ${p.available} available</option>`).join('');
     const lineRow = () => `<div class="row lineRow"><select class="lineProd" style="flex:1;min-width:200px">${opts}</select><input type="number" class="lineQty" min="1" value="1" style="width:84px" title="Quantity"><button type="button" class="btn sm icon-btn rmLine" aria-label="Remove item">${icon('x')}</button></div>`;
     m.innerHTML = `
       <div class="row" style="justify-content:space-between"><h2 style="margin:0">Create order</h2><button class="btn sm icon-btn" id="closeM" type="button" aria-label="Close">${icon('x')}</button></div>
@@ -285,7 +334,7 @@
           const form = new FormData(); form.append('label', label);
           await api(`/api/client/orders/${o.id}/label`, { method: 'POST', form, headers: H() });
         }
-        toast(`Order ${o.order_number} created${label ? ' with its label' : ''}.`); closeModal(); loadOrders();
+        toast(`Order ${o.order_number} created${label ? ' with its label' : ''}.`); closeModal(); loadOrders(); loadProducts(); loadInventory();
       } catch (err) { fieldError($('#noNum'), err.message); } });
     };
   }
@@ -298,7 +347,7 @@
     const b = $('#unread'); b.textContent = unread; b.hidden = unread === 0;
     if (unread > prevUnread && prevUnread !== undefined && notifs.length) toast(notifs[0].message, 5000);
     renderNotifs();
-    if (unread > prevUnread) loadOrders();
+    if (unread > prevUnread) { loadOrders(); loadProducts(); loadInventory(); } // a print or a receipt changed stock
   }
   function renderNotifs() {
     const el = $('#notifs');

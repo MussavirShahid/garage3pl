@@ -20,14 +20,15 @@
 
   function enter() {
     $('#login').hidden = true; $('#app').hidden = false; $('#logout').hidden = false;
-    loadTypes(); loadOrders(); loadClients();
+    loadTypes(); loadOrders(); loadClients(); loadInventory();
     setInterval(loadOrders, 20000);
   }
 
   // ---------- tabs ----------
   $$('.tab').forEach((t) => t.addEventListener('click', () => {
     $$('.tab').forEach((x) => x.classList.toggle('active', x === t));
-    for (const id of ['orders', 'clients']) $('#tab-' + id).hidden = id !== t.dataset.tab;
+    for (const id of ['orders', 'inventory', 'clients']) $('#tab-' + id).hidden = id !== t.dataset.tab;
+    if (t.dataset.tab === 'inventory') loadInventory();
   }));
 
   // ---------- orders: filters (same segmented controls as the client portal) ----------
@@ -126,7 +127,7 @@
     try {
       await api(`/api/wh/orders/${id}/print`, { method: 'POST', headers: H() });
       toast(`Order ${o.order_number} marked printed — client notified.`);
-      loadOrders();
+      loadOrders(); loadInventory(); // printing deducts stock
     } catch (err) { toast(err.message); }
   }
 
@@ -179,10 +180,14 @@
   async function loadClients() {
     let clients;
     try { clients = await api('/api/wh/clients', { headers: H() }); } catch (err) { toast(err.message); return; }
-    // keep the queue's client filter in sync
-    const sel = $('#clientFilter'); const cur = sel.value;
-    sel.innerHTML = '<option value="">All clients</option>' + clients.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
-    if (clients.some((c) => c.id === cur)) sel.value = cur;
+    // keep the queue's client filter, and the inventory tab's client selects, in sync
+    const opts = clients.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+    for (const [id, first] of [['clientFilter', '<option value="">All clients</option>'], ['ivFilterClient', '<option value="">All clients</option>'], ['ivClient', '']]) {
+      const sel = $('#' + id); const cur = sel.value;
+      sel.innerHTML = first + opts;
+      if (clients.some((c) => c.id === cur)) sel.value = cur;
+    }
+    fillIvProducts();
     const el = $('#clients');
     if (!clients.length) { el.innerHTML = `<div class="empty">${icon('user')}<strong>No clients yet</strong><span>Create one on the left and share the access code.</span></div>`; return; }
     el.innerHTML = `<div class="client-list">${clients.map((c) => `
@@ -214,6 +219,65 @@
         loadClients();
       } catch (err) { fieldError($('#cName'), err.message); }
     });
+  });
+
+  // ---------- inventory ----------
+  let inv = { stock: [], inbound: [] };
+  async function loadInventory() {
+    try { inv = await api('/api/wh/inventory', { headers: H() }); } catch (err) { toast(err.message); return; }
+    renderInventory();
+  }
+  // The add form's product list follows the chosen client.
+  function fillIvProducts() {
+    const cid = $('#ivClient').value; const sel = $('#ivProd'); const cur = sel.value;
+    const prods = inv.stock.filter((s) => s.client_id === cid);
+    sel.innerHTML = prods.length
+      ? prods.map((s) => `<option value="${s.product_id}">${esc(s.name)}${s.sku ? ` (${esc(s.sku)})` : ''} — ${s.available} available</option>`).join('')
+      : '<option value="">This client has no products yet</option>';
+    if (prods.some((s) => s.product_id === cur)) sel.value = cur;
+  }
+  function renderInventory() {
+    fillIvProducts();
+    const fc = $('#ivFilterClient').value;
+    const stock = inv.stock.filter((s) => !fc || s.client_id === fc);
+    const inbound = inv.inbound.filter((r) => !fc || r.client_id === fc);
+
+    const st = $('#whStock');
+    st.innerHTML = stock.length
+      ? `<div class="table-wrap stock-table"><table><thead><tr><th>Client</th><th>Product</th><th class="num">On hand</th><th class="num">Reserved</th><th class="num">Available</th></tr></thead><tbody>${stock.map((s) => `
+        <tr><td>${esc(s.client_name)}</td><td><strong>${esc(s.name)}</strong><div class="cell-sub">${esc(s.sku || 'no SKU')}</div></td><td class="num">${s.stock}</td><td class="num">${s.committed}</td><td class="num"><strong class="${s.available > 0 ? 'ok-text' : 'danger-text'}">${s.available}</strong></td></tr>`).join('')}</tbody></table></div>`
+      : `<div class="empty">${icon('box')}<strong>No products</strong><span>Stock appears here once clients add products.</span></div>`;
+
+    const el = $('#whInbound');
+    if (!inbound.length) { el.innerHTML = `<div class="empty">${icon('calendar')}<strong>No incoming inventory</strong><span>Clients log deliveries from their portal, or add one on the left.</span></div>`; return; }
+    el.innerHTML = `<div class="stack">${inbound.map((r) => `
+      <div class="client-row">
+        <div class="grow"><strong>${esc(r.product_name)}</strong> <span class="muted">×${r.quantity}</span><div class="cell-sub">${esc(r.client_name)}${r.sku ? ` · ${esc(r.sku)}` : ''}${r.tracking_id ? ` · Tracking ${esc(r.tracking_id)}` : ''}</div></div>
+        <div class="meta"><span class="muted small">Expected</span> <strong>${r.expected_at ? esc(r.expected_at) : '—'}</strong></div>
+        <span class="status ${esc(r.status)}">${r.status === 'received' ? `Received ${esc(fmtDate(r.received_at))}${r.received_quantity !== r.quantity ? ` (×${r.received_quantity})` : ''}` : 'Expected'}</span>
+        ${r.status === 'expected' ? `<button class="btn gold sm recvIn" type="button" data-id="${r.id}" data-qty="${r.quantity}" data-name="${esc(r.product_name)}">${icon('check')} Mark received</button>` : ''}
+      </div>`).join('')}</div>`;
+    $$('.recvIn', el).forEach((b) => b.addEventListener('click', async () => {
+      const q = prompt(`Quantity received for ${b.dataset.name} (expected ${b.dataset.qty}):`, b.dataset.qty);
+      if (q === null) return;
+      try {
+        await busy(b, () => api(`/api/wh/inbound/${b.dataset.id}/receive`, { method: 'POST', headers: H(), body: { quantity: q } }));
+        toast('Received — stock updated and the client has been notified.');
+        loadInventory();
+      } catch (err) { toast(err.message, 6000); }
+    }));
+  }
+  $('#ivClient').addEventListener('change', fillIvProducts);
+  $('#ivFilterClient').addEventListener('change', renderInventory);
+  $('#ivForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const received = $('#ivRecv').checked;
+    busy(e.submitter, async () => { try {
+      await api('/api/wh/inbound', { method: 'POST', headers: H(), body: { client_id: $('#ivClient').value, product_id: $('#ivProd').value, quantity: $('#ivQty').value, expected_at: $('#ivDate').value, tracking_id: $('#ivTrack').value, received } });
+      toast(received ? 'Inventory added to stock and the client has been notified.' : 'Incoming inventory logged.');
+      $('#ivQty').value = ''; $('#ivDate').value = ''; $('#ivTrack').value = ''; $('#ivRecv').checked = false;
+      loadInventory();
+    } catch (err) { fieldError($('#ivQty'), err.message); } });
   });
 
   // ---------- boot ----------

@@ -35,6 +35,7 @@
       <div class="tabs">
         <button class="tab active" data-tab="orders">Orders</button>
         <button class="tab" data-tab="products">Products</button>
+        <button class="tab" data-tab="inventory">Inventory</button>
         <button class="tab" data-tab="notifs">Notifications <span id="unread" class="badge" hidden>0</span></button>
       </div>
 
@@ -82,6 +83,34 @@
           </div>
           <p class="muted">Add products by hand or import them from Excel. Pictures are suggested automatically when you don't provide one. Click a product to edit it, pick a better image, upload your own, or set its garage location.</p>
           <div id="products" class="grid cols-3"></div>
+        </div>
+      </div>
+
+      <!-- INVENTORY -->
+      <div id="tab-inventory" hidden>
+        <div class="grid cols-2" style="margin-bottom:16px">
+          <div class="card">
+            <h2>Add incoming inventory</h2>
+            <p class="muted">Tell the warehouse what is on its way. When they mark it received, your stock goes up and you can create orders for it.</p>
+            <form id="inForm" class="stack">
+              <div><label for="inProd">Product</label><select id="inProd"></select></div>
+              <div class="grid cols-2">
+                <div><label for="inQty">Quantity <span class="req" aria-hidden="true">*</span></label><input type="number" id="inQty" min="1" step="1" required aria-required="true"></div>
+                <div><label for="inDate">Expected delivery date</label><input type="date" id="inDate"></div>
+              </div>
+              <div><label for="inTrack">Tracking ID</label><input type="text" id="inTrack" placeholder="carrier tracking number" autocomplete="off"></div>
+              <button class="btn primary" type="submit">Add inventory</button>
+            </form>
+          </div>
+          <div class="card">
+            <h2>Stock levels</h2>
+            <p class="muted small">Reserved = units in your orders that are not printed yet. Available = on hand − reserved. Orders can only be created for available units.</p>
+            <div id="stock"></div>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Incoming deliveries</h2>
+          <div id="inbound"></div>
         </div>
       </div>
 

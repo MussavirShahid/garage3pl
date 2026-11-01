@@ -46,7 +46,8 @@ Motion: 180 ms, `cubic-bezier(.25,.1,.25,1)`; disabled under `prefers-reduced-mo
   name · SKU · ×qty, round prev/next/close buttons (44 px), "n of N" counter, ←/→ and Esc, backdrop
   click closes, focus returns to the opener. Single-photo orders hide the arrows.
 - **Product tiles**: centered, 140 px image, name, SKU · type, location pill. Lift 2 px on hover.
-- **Status chips**: text + leading dot, semantic soft fill. Never color alone.
+- **Status chips**: text + leading dot, semantic soft fill. Never color alone. Orders: new / label_ready /
+  printed; inbound inventory: `expected` (amber) / `received` (green).
 - **Forms**: visible `<label for>`, required marker, inline `.field-error` beside the field
   (`role=alert`, `aria-invalid`), 44 px inputs, 4 px focus halo.
 - **Tables**: in `.table-wrap` (horizontal scroll on narrow screens), hairline rows, hover tint.

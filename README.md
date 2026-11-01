@@ -120,6 +120,29 @@ No spreadsheet needed:
   it, the button disappears and the server refuses the deletion.
 - **Filter orders by date**: All / Today / Yesterday, or pick a date range.
 
+## Inventory
+
+Stock is tracked per product, and orders can only be created for units that are
+actually available.
+
+1. **Log a delivery.** On the client portal's **Inventory** tab, add what is on
+   its way: product, quantity, expected delivery date and tracking ID. The
+   warehouse can do the same for a client on its own Inventory tab (and tick
+   *already received* to put it straight into stock).
+2. **Warehouse receives it.** On the warehouse Inventory tab, **Mark received**
+   (correcting the quantity if fewer units arrived). The product's stock on hand
+   goes up and the client gets a notification.
+3. **Orders reserve stock.** Units in orders that are not printed yet count as
+   *reserved*. **Available = on hand − reserved.** Creating an order, by hand or
+   from an Excel import, is refused for any product with fewer available units
+   than requested; an import reports the lines it skipped so the sheet can be
+   imported again once the delivery has been received.
+4. **Printing deducts.** The first time an order is printed its units leave
+   stock. Reprints never deduct again.
+
+Both portals show on hand / reserved / available per product; the client's
+Create order form greys out products with nothing available.
+
 ## Warehouse queue filters
 
 The order queue can be filtered by status, by client, by item type (from the
