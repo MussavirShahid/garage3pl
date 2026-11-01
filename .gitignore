@@ -2,5 +2,4 @@ node_modules/
 __pycache__/
 /data/
 /uploads/
-public/sample-orders.xlsx
 .env

@@ -6,7 +6,6 @@ import { existsSync, mkdirSync, createReadStream, unlinkSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 import { db } from './db.js';
-import { parseWorkbook } from './services/excel.js';
 import { findImages } from './services/images.js';
 import { notifyClient } from './services/notify.js';
 import { ensureSeed } from './seed.js';
@@ -26,7 +25,6 @@ app.use(express.static(PUBLIC_DIR));
 app.use('/files/products', express.static(UP_PRODUCTS));
 
 // ---------- uploads ----------
-const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 const labelUpload = multer({
   storage: multer.diskStorage({
     destination: (_req, _f, cb) => cb(null, UP_LABELS),
@@ -335,134 +333,6 @@ app.delete('/api/client/inbound/:id', clientAuth, (req, res) => {
   db.inbound.splice(i, 1);
   db.save();
   res.json({ ok: true });
-});
-
-// Excel/CSV import -> products + orders
-app.post('/api/client/import', clientAuth, memUpload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
-  let parsed;
-  try {
-    parsed = parseWorkbook(req.file.buffer);
-  } catch (e) {
-    return res.status(400).json({ error: e.message });
-  }
-
-  const clientId = req.client.id;
-  const createdProducts = [];
-  let productCount = 0;
-  const orderMap = new Map(); // key -> order (orders touched by this import)
-  const lockedOrders = new Set(); // already printed/shipped: never rewritten by a re-import
-  const newOrderIds = new Set(); // orders created by this import
-  const prevItems = new Map(); // order id -> lines before a re-import rebuilt them
-  const linesSkipped = []; // lines refused because the product has too few available units
-  let ordersCreated = 0, ordersUpdated = 0;
-
-  for (let i = 0; i < parsed.records.length; i++) {
-    const rec = parsed.records[i];
-    // upsert product
-    let product = productFor(clientId, rec);
-    if (!product) {
-      product = {
-        id: db.uid(),
-        client_id: clientId,
-        sku: rec.sku,
-        name: rec.name,
-        description: rec.description || '',
-        location: rec.location || '',
-        type: rec.type || '',
-        image: null,
-        image_source: null,
-        stock: 0,
-        created_at: now(),
-      };
-      db.products.push(product);
-      createdProducts.push(product);
-      productCount++;
-    } else {
-      if (rec.location && !product.location) product.location = rec.location;
-      if (rec.description && !product.description) product.description = rec.description;
-      if (rec.type && !product.type) product.type = rec.type;
-    }
-
-    if (!parsed.hasOrders) continue;
-
-    const orderNumber = rec.order || `IMP-${new Date().toISOString().slice(0, 10)}-${i + 1}`;
-    const key = orderNumber;
-    if (lockedOrders.has(key)) continue;
-    let order = orderMap.get(key);
-    if (!order) {
-      order = db.orders.find((o) => o.client_id === clientId && o.order_number === orderNumber);
-      if (!order) {
-        order = {
-          id: db.uid(),
-          client_id: clientId,
-          order_number: orderNumber,
-          status: 'new',
-          ship_to: rec.shipto || '',
-          items: [],
-          label: null,
-          created_at: now(),
-          printed_at: null,
-        };
-        db.orders.push(order);
-        newOrderIds.add(order.id);
-        ordersCreated++;
-      } else if (order.status === 'printed' || order.status === 'shipped') {
-        // The sheet is the source of truth only until the order has been printed.
-        lockedOrders.add(key);
-        continue;
-      } else {
-        // Re-import: rebuild this order's lines from the sheet instead of appending duplicates.
-        prevItems.set(order.id, order.items);
-        order.items = [];
-        ordersUpdated++;
-      }
-      orderMap.set(key, order);
-    }
-    if (rec.shipto && !order.ship_to) order.ship_to = rec.shipto;
-    // Inventory rule, same as creating an order by hand: the line must fit within the
-    // product's available units. Lines already accepted in this import sit in unprinted
-    // orders, so they are counted; a re-imported order's old lines were cleared, so they are not.
-    const avail = availableFor(product);
-    if (rec.qty > avail) {
-      linesSkipped.push({ order: orderNumber, sku: rec.sku || '', name: rec.name, qty: rec.qty, available: Math.max(0, avail) });
-      continue;
-    }
-    order.items.push({ sku: rec.sku, name: rec.name, quantity: rec.qty, product_id: product.id });
-  }
-
-  // An order with no accepted lines is not saved empty: a new one is dropped, an
-  // existing one keeps the lines it had before this import.
-  let ordersWithoutStock = 0;
-  for (const order of orderMap.values()) {
-    if (order.items.length) continue;
-    ordersWithoutStock++;
-    if (newOrderIds.has(order.id)) {
-      const idx = db.orders.indexOf(order);
-      if (idx !== -1) db.orders.splice(idx, 1);
-      ordersCreated--;
-    } else {
-      order.items = prevItems.get(order.id) || [];
-      ordersUpdated--;
-    }
-  }
-
-  db.save();
-  // background image enrichment (do not block response)
-  backfillImages(createdProducts);
-
-  res.json({
-    ok: true,
-    mapping: parsed.mapping,
-    products_added: productCount,
-    orders_added: ordersCreated,
-    orders_updated: ordersUpdated,
-    orders_skipped: lockedOrders.size,
-    orders_without_stock: ordersWithoutStock,
-    lines_skipped: linesSkipped,
-    catalog_only: !parsed.hasOrders,
-    rows: parsed.rowCount,
-  });
 });
 
 // product edits (client can set/correct image, location, description)

@@ -41,15 +41,6 @@
 
       <!-- ORDERS -->
       <div id="tab-orders">
-        <div class="card" style="margin-bottom:16px">
-          <h2>Import orders from Excel</h2>
-          <p class="muted">Upload .xlsx or .csv with columns like <span class="kbd">Order Number</span>, <span class="kbd">SKU</span>, <span class="kbd">Product Name</span>, <span class="kbd">Description</span>, <span class="kbd">Qty</span>, <span class="kbd">Ship To</span>. Header names are matched flexibly. Need a template? <a href="/sample-orders.xlsx">Download the sample sheet</a>.</p>
-          <form id="importForm" class="row">
-            <input type="file" id="importFile" accept=".xlsx,.xls,.csv" required aria-label="Order sheet file">
-            <button class="btn primary" type="submit">Import</button>
-          </form>
-          <div id="importResult" class="muted" style="margin-top:10px"></div>
-        </div>
         <div class="card">
           <div class="row" style="justify-content:space-between;margin-bottom:12px">
             <h2 style="margin:0">Your orders</h2>
@@ -81,7 +72,7 @@
               <button id="newProduct" class="btn primary sm" type="button"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Add product</button>
             </div>
           </div>
-          <p class="muted">Add products by hand or import them from Excel. Pictures are suggested automatically when you don't provide one. Click a product to edit it, pick a better image, upload your own, or set its garage location.</p>
+          <p class="muted">Pictures are suggested automatically when you don't provide one. Click a product to edit it, pick a better image or upload your own.</p>
           <div id="products" class="grid cols-3"></div>
         </div>
       </div>

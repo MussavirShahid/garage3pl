@@ -69,7 +69,7 @@
   }
   function renderOrders() {
     const el = $('#orders');
-    if (!orders.length) { el.innerHTML = `<div class="empty">${icon('box')}<strong>No orders yet</strong><span>Import an Excel sheet above, or create one by hand.</span><button class="btn primary sm" type="button" id="emptyNewOrder">${icon('plus')} Create order</button></div>`; const b = $('#emptyNewOrder'); if (b) b.onclick = openNewOrder; return; }
+    if (!orders.length) { el.innerHTML = `<div class="empty">${icon('box')}<strong>No orders yet</strong><span>Create one with the button above.</span><button class="btn primary sm" type="button" id="emptyNewOrder">${icon('plus')} Create order</button></div>`; const b = $('#emptyNewOrder'); if (b) b.onclick = openNewOrder; return; }
     const list = filterByDate(orders);
     if (!list.length) { el.innerHTML = `<div class="empty">${icon('calendar')}<strong>No orders in this period</strong><span>Try another date, or choose All.</span></div>`; return; }
     el.innerHTML = `<div class="grid cols-4 order-grid">${list.map((o) => {
@@ -110,27 +110,6 @@
     }));
   }
 
-  // ---------- import ----------
-  $('#importForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const f = $('#importFile').files[0];
-    if (!f) return;
-    const form = new FormData(); form.append('file', f);
-    const out = $('#importResult');
-    out.textContent = 'Importing…';
-    await busy(e.submitter, async () => { try {
-      const r = await api('/api/client/import', { method: 'POST', form, headers: H() });
-      const mapped = Object.entries(r.mapping).map(([k, v]) => `${k} ← "${esc(v)}"`).join(', ');
-      const skipped = r.lines_skipped || [];
-      const skipNote = skipped.length ? `<br><span class="danger-text" style="font-size:13px"><strong>${skipped.length} line${skipped.length === 1 ? '' : 's'} skipped</strong> for lack of available inventory: ${skipped.slice(0, 6).map((l) => `${esc(l.name)} ×${l.qty} in order ${esc(l.order)} (${l.available} available)`).join('; ')}${skipped.length > 6 ? '; …' : ''}. Log those deliveries on the Inventory tab and import the sheet again once the warehouse has received them.</span>` : '';
-      out.innerHTML = `Imported <strong>${r.rows}</strong> rows: <strong>${r.orders_added}</strong> orders, <strong>${r.products_added}</strong> new products.${r.catalog_only ? ' (No order column found, so products were added to your catalog only.)' : ''}${skipNote}<br><span style="font-size:12px">Columns detected: ${mapped}</span><br><span style="font-size:12px">Product pictures are being looked up in the background. Refresh Products in a moment.</span>`;
-      $('#importFile').value = '';
-      await refreshAll();
-      setTimeout(loadProducts, 6000);
-      setTimeout(loadProducts, 15000);
-    } catch (err) { out.textContent = ''; fieldError($('#importFile'), err.message); } });
-  });
-
   // ---------- products ----------
   async function loadProducts() {
     if (!products.length) $('#products').innerHTML = '<div style="grid-column:1/-1">' + skeleton(2) + '</div>';
@@ -143,7 +122,7 @@
     const q = $('#prodSearch').value.trim().toLowerCase();
     const list = products.filter((p) => !q || (p.name + ' ' + (p.sku || '')).toLowerCase().includes(q));
     const el = $('#products');
-    if (!list.length) { el.innerHTML = `<div class="empty" style="grid-column:1/-1">${icon('image')}<strong>${q ? 'No products match your search' : 'No products yet'}</strong><span>${q ? 'Try a different name or SKU.' : 'Add one by hand or import an Excel sheet from the Orders tab.'}</span></div>`; return; }
+    if (!list.length) { el.innerHTML = `<div class="empty" style="grid-column:1/-1">${icon('image')}<strong>${q ? 'No products match your search' : 'No products yet'}</strong><span>${q ? 'Try a different name or SKU.' : 'Add one with the button above.'}</span></div>`; return; }
     el.innerHTML = list.map((p) => `
       <div class="card tile" style="cursor:pointer" data-id="${p.id}">
         ${thumb(p.image, p.name, 'lg')}
@@ -268,7 +247,6 @@
           <div><label>Product name <span class="req" aria-hidden="true">*</span></label><input type="text" id="npName" required aria-required="true"></div>
           <div><label>SKU</label><input type="text" id="npSku" placeholder="optional, must be unique"></div>
           <div><label>Item type / category</label><input type="text" id="npType" placeholder="e.g. Mug, Apparel, Candle"></div>
-          <div><label>Garage location</label><input type="text" id="npLoc" placeholder="e.g. Shelf A2"></div>
         </div>
         <div><label>Description</label><textarea id="npDesc" rows="3"></textarea></div>
         <div class="grid cols-2">
@@ -286,7 +264,7 @@
       busy(e.submitter, async () => { try {
         const p = await api('/api/client/products', { method: 'POST', headers: H(), body: {
           name: $('#npName').value, sku: $('#npSku').value, type: $('#npType').value,
-          location: $('#npLoc').value, description: $('#npDesc').value, image: file ? '' : imgUrl,
+          description: $('#npDesc').value, image: file ? '' : imgUrl,
         } });
         if (file) {
           const form = new FormData(); form.append('image', file);

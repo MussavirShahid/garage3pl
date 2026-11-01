@@ -3,8 +3,9 @@
 A small, self-hosted fulfillment app for a home-garage third-party logistics
 operation. Two portals, one server, no database to install.
 
-- **Client portal** (`/client.html`): import orders from Excel, see products
-  with pictures, attach a shipping label to each order, get notified when it prints.
+- **Client portal** (`/client.html`): create orders, see products with pictures,
+  log incoming inventory, attach a shipping label to each order, get notified
+  when it prints.
 - **Warehouse portal** (`/warehouse.html`): queue of orders to pick, each item
   shown with picture, description, garage location and quantity. Print the label
   and the order is marked printed and the client is notified automatically.
@@ -39,12 +40,12 @@ Open http://localhost:4000. On first run it creates:
 |---|---|
 | Warehouse passcode | `warehouse` (set `WAREHOUSE_PASSCODE` on any start to change it) |
 | Demo client code | `DEMO01` |
-| Sample order sheet | http://localhost:4000/sample-orders.xlsx |
 
-Try it: sign in as the client with `DEMO01`, import the sample sheet, upload any
-PDF/image as a label on an order, then sign in to the warehouse, open the pick
-list and click **Print label**. Switch back to the client tab: the order shows
-**Printed** and a notification appears.
+Try it: sign in as the client with `DEMO01`, add a product, log some inventory
+for it on the Inventory tab, then sign in to the warehouse and mark it received.
+Back as the client, create an order for it and upload any PDF/image as its
+label; in the warehouse, open the pick list and click **Print label**. Switch
+back to the client tab: the order shows **Printed** and a notification appears.
 
 ## Working from another computer
 
@@ -85,33 +86,12 @@ start with plain `node src/server.js`, run `git pull` first.)
 Don't use GitHub's "Download ZIP" for a machine you'll keep using: a ZIP has
 no git link, so it never receives updates.
 
-## Excel format
+## Adding products and orders
 
-Any `.xlsx`, `.xls` or `.csv`. The first row is the header. Column names are
-matched flexibly (case-insensitive, synonyms accepted):
-
-| Field | Accepted headers (examples) |
-|---|---|
-| Order number | Order, Order Number, Order ID, Reference, PO |
-| SKU | SKU, Item, Item Number, Product Code, UPC, Barcode |
-| Product name | Product, Product Name, Name, Title |
-| Description | Description, Desc, Details |
-| Quantity | Qty, Quantity, Units |
-| Location | Location, Bin, Shelf, Aisle |
-| Item type | Type, Category, Item Type, Product Type |
-| Ship to | Ship To, Recipient, Customer, Address |
-
-One row = one line item. Rows with the same order number become one order.
-If there is no order column, the rows are added to the product catalog only.
-Products are matched by SKU within a client, so re-importing does not duplicate them.
-
-## Adding products and orders by hand
-
-No spreadsheet needed:
-
-- **Products tab → + Add product**: name, SKU, item type, garage location,
-  description, and a photo (upload a file or paste an image link; leave both
-  empty and a picture is looked up for you).
+- **Products tab → + Add product**: name, SKU, item type, description, and a
+  photo (upload a file or paste an image link; leave both empty and a picture
+  is looked up for you). The garage location is set by the warehouse from the
+  pick list.
 - **Orders tab → + Create order**: pick products and quantities, enter the
   ship-to, and attach the shipping label in the same step or later from the
   orders table.
@@ -133,10 +113,8 @@ actually available.
    (correcting the quantity if fewer units arrived). The product's stock on hand
    goes up and the client gets a notification.
 3. **Orders reserve stock.** Units in orders that are not printed yet count as
-   *reserved*. **Available = on hand − reserved.** Creating an order, by hand or
-   from an Excel import, is refused for any product with fewer available units
-   than requested; an import reports the lines it skipped so the sheet can be
-   imported again once the delivery has been received.
+   *reserved*. **Available = on hand − reserved.** Creating an order is refused
+   for any product with fewer available units than requested.
 4. **Printing deducts.** The first time an order is printed its units leave
    stock. Reprints never deduct again.
 
@@ -165,8 +143,8 @@ first if in doubt.
 
 ## Product pictures
 
-After import, the app looks up a picture for each new product in the
-background. By default it uses [Openverse](https://openverse.org), which needs
+When a product is added without a photo, the app looks up a picture for it in
+the background. By default it uses [Openverse](https://openverse.org), which needs
 no API key but mostly has openly-licensed photos, so matches for specific retail
 SKUs are hit-or-miss. Every picture is a suggestion: click a product to choose
 from more results, paste a URL, or upload your own photo.
@@ -190,7 +168,7 @@ as JSON. Wire that URL to Zapier, Make, n8n or your own script.
 ## Host it online for free (to test from any browser)
 
 GitHub Pages cannot host this app: it only serves static files, and this app
-needs its Node server for imports, uploads and the API. Render's free tier
+needs its Node server for uploads and the API. Render's free tier
 runs it as-is from this repo.
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/MussavirShahid/garage3pl)
@@ -266,8 +244,7 @@ and a reverse proxy with authentication (e.g. Cloudflare Access, Tailscale).
 ```
 src/server.js          Express app and all API routes
 src/db.js              atomic JSON store
-src/seed.js            first-run defaults + sample Excel
-src/services/excel.js  flexible column mapping and row grouping
+src/seed.js            first-run defaults (passcode, demo client)
 src/services/images.js image lookup providers
 src/services/notify.js client notifications (+ optional webhook)
 public/                the two portals (plain HTML/CSS/JS, no build step)

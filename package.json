@@ -14,7 +14,6 @@
   },
   "dependencies": {
     "express": "^4.19.2",
-    "multer": "^2.0.2",
-    "xlsx": "^0.18.5"
+    "multer": "^2.0.2"
   }
 }
