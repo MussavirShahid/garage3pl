@@ -15,7 +15,7 @@ const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'data');
 const DB_FILE = join(DATA_DIR, 'zip.sqlite');
 const LEGACY_JSON = join(DATA_DIR, 'store.json');
 const BACKUP_DIR = join(DATA_DIR, 'backups');
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 // Node labels its SQLite module "experimental" and prints a warning on every start. The API we
 // use is stable enough; hide just that warning and keep every other one.
@@ -176,6 +176,8 @@ function migrate() {
   if (version >= SCHEMA_VERSION) return;
   db.tx(() => {
     if (version < 1) conn.exec(SCHEMA_V1);
+    // v2: an order may be placed against inventory that is still on its way.
+    if (version < 2) conn.exec('ALTER TABLE orders ADD COLUMN awaiting_stock INTEGER NOT NULL DEFAULT 0');
     conn.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   });
 }

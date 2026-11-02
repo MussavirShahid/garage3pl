@@ -58,7 +58,7 @@
   }));
   $('#oFrom').addEventListener('change', renderOrders);
   $('#oTo').addEventListener('change', renderOrders);
-  const canDelete = (o) => o.status === 'new' || o.status === 'label_ready';
+  const canDelete = (o) => o.status === 'new' || o.status === 'label_ready' || o.status === 'awaiting_delivery';
 
   // ---------- orders ----------
   async function loadOrders() {
@@ -128,7 +128,7 @@
         <div style="min-width:0">
           <h3 style="margin:0">${esc(p.name)}</h3>
           <div class="muted" style="font-size:13px">${esc(p.sku || 'no SKU')}${p.type ? ` · ${esc(p.type)}` : ''}</div>
-          <div class="small" style="margin-top:4px"><strong class="${p.available > 0 ? 'ok-text' : 'danger-text'}">${p.available ?? 0} available</strong> <span class="muted">· ${p.stock ?? 0} on hand</span></div>
+          <div class="small" style="margin-top:4px"><strong class="${p.available > 0 ? 'ok-text' : 'danger-text'}">${p.available ?? 0} available</strong> <span class="muted">· ${p.stock ?? 0} on hand${p.incoming ? ` · ${p.incoming} ordered` : ''}</span></div>
           <div class="small" style="margin-top:4px">${p.location ? `<span class="loc">${icon('pin')} ${esc(p.location)}</span>` : '<span class="muted">No location set</span>'}</div>
         </div>
       </div>`).join('');
@@ -144,14 +144,14 @@
   function renderInventory() {
     const sel = $('#inProd'); const cur = sel.value;
     sel.innerHTML = inv.products.length
-      ? inv.products.map((p) => `<option value="${p.id}">${esc(p.name)}${p.sku ? ` (${esc(p.sku)})` : ''}</option>`).join('')
-      : '<option value="">Add a product first (Products tab)</option>';
-    if (inv.products.some((p) => p.id === cur)) sel.value = cur;
+      ? '<option value="" disabled selected>Select product</option>' + inv.products.map((p) => `<option value="${p.id}">${esc(p.name)}${p.sku ? ` (${esc(p.sku)})` : ''}</option>`).join('')
+      : '<option value="" disabled selected>Add a product first (Products tab)</option>';
+    if (inv.products.some((p) => p.id === cur)) sel.value = cur; // keep a choice the user already made
 
     const st = $('#stock');
     if (!inv.products.length) st.innerHTML = `<div class="empty">${icon('box')}<strong>No products yet</strong><span>Add products on the Products tab, then log incoming inventory here.</span></div>`;
-    else st.innerHTML = `<div class="table-wrap stock-table"><table><thead><tr><th>Product</th><th class="num">On hand</th><th class="num">Reserved</th><th class="num">Available</th></tr></thead><tbody>${inv.products.map((p) => `
-      <tr><td><div class="row" style="gap:10px;flex-wrap:nowrap">${thumb(p.image, p.name)}<div style="min-width:0"><strong>${esc(p.name)}</strong><div class="cell-sub">${esc(p.sku || 'no SKU')}</div></div></div></td><td class="num">${p.stock}</td><td class="num">${p.committed}</td><td class="num"><strong class="${p.available > 0 ? 'ok-text' : 'danger-text'}">${p.available}</strong></td></tr>`).join('')}</tbody></table></div>`;
+    else st.innerHTML = `<div class="table-wrap stock-table"><table><thead><tr><th>Product</th><th class="num">On hand</th><th class="num">Ordered</th><th class="num">Reserved</th><th class="num">Available</th></tr></thead><tbody>${inv.products.map((p) => `
+      <tr><td><div class="row" style="gap:10px;flex-wrap:nowrap">${thumb(p.image, p.name)}<div style="min-width:0"><strong>${esc(p.name)}</strong><div class="cell-sub">${esc(p.sku || 'no SKU')}</div></div></div></td><td class="num">${p.stock}</td><td class="num">${p.incoming}</td><td class="num">${p.committed}</td><td class="num"><strong class="${p.available > 0 ? 'ok-text' : 'danger-text'}">${p.available}</strong></td></tr>`).join('')}</tbody></table></div>`;
 
     const el = $('#inbound');
     if (!inv.inbound.length) { el.innerHTML = `<div class="empty">${icon('calendar')}<strong>No incoming inventory</strong><span>Log a delivery above with its expected date and tracking ID. The warehouse marks it received and your stock goes up.</span></div>`; return; }
@@ -170,10 +170,11 @@
   }
   $('#inForm').addEventListener('submit', (e) => {
     e.preventDefault();
+    if (!$('#inProd').value) { fieldError($('#inProd'), 'Select a product.'); return; }
     busy(e.submitter, async () => { try {
       await api('/api/client/inbound', { method: 'POST', body: { product_id: $('#inProd').value, quantity: $('#inQty').value, expected_at: $('#inDate').value, tracking_id: $('#inTrack').value } });
       toast('Incoming inventory logged. The warehouse will mark it received.');
-      $('#inQty').value = ''; $('#inDate').value = ''; $('#inTrack').value = '';
+      $('#inQty').value = ''; $('#inDate').value = ''; $('#inTrack').value = ''; $('#inProd').value = '';
       loadInventory();
     } catch (err) { fieldError($('#inQty'), err.message); } });
   });
@@ -279,10 +280,10 @@
   $('#newOrder').addEventListener('click', openNewOrder);
   function openNewOrder() {
     if (!products.length) { toast('Add a product first, on the Products tab.'); return; }
-    if (!products.some((p) => p.available > 0)) { toast('No inventory available to order yet. Log incoming inventory on the Inventory tab; once the warehouse receives it you can create orders.', 7000); return; }
+    if (!products.some((p) => p.available > 0)) { toast('No inventory to order yet. Log a delivery on the Inventory tab, then you can create orders for it.', 7000); return; }
     const m = $('#modal');
     // Products with nothing available cannot be chosen; the server enforces the same rule.
-    const opts = products.map((p) => `<option value="${p.id}" ${p.available > 0 ? '' : 'disabled'}>${esc(p.name)}${p.sku ? ` (${esc(p.sku)})` : ''} — ${p.available} available</option>`).join('');
+    const opts = '<option value="" disabled selected>Select item</option>' + products.map((p) => `<option value="${p.id}" ${p.available > 0 ? '' : 'disabled'}>${esc(p.name)}${p.sku ? ` (${esc(p.sku)})` : ''} — ${p.available} available${p.incoming && p.available > 0 ? ` (${p.incoming} on the way)` : ''}</option>`).join('');
     const lineRow = () => `<div class="row lineRow"><select class="lineProd" style="flex:1;min-width:200px">${opts}</select><input type="number" class="lineQty" min="1" value="1" style="width:84px" title="Quantity"><button type="button" class="btn sm icon-btn rmLine" aria-label="Remove item">${icon('x')}</button></div>`;
     m.innerHTML = `
       <div class="row" style="justify-content:space-between"><h2 style="margin:0">Create order</h2><button class="btn sm icon-btn" id="closeM" type="button" aria-label="Close">${icon('x')}</button></div>
@@ -303,6 +304,8 @@
     $('#addLine').onclick = () => { lines.insertAdjacentHTML('beforeend', lineRow()); wire(); };
     $('#noForm').onsubmit = (e) => {
       e.preventDefault();
+      const empty = $$('.lineRow', lines).find((r) => !$('.lineProd', r).value);
+      if (empty) { fieldError($('.lineProd', empty), 'Select an item.'); return; }
       const items = $$('.lineRow', lines).map((r) => ({ product_id: $('.lineProd', r).value, quantity: $('.lineQty', r).value }));
       const label = $('#noLabel').files[0];
       busy(e.submitter, async () => { try {
@@ -311,7 +314,10 @@
           const form = new FormData(); form.append('label', label);
           await api(`/api/client/orders/${o.id}/label`, { method: 'POST', form });
         }
-        toast(`Order ${o.order_number} created${label ? ' with its label' : ''}.`); closeModal(); loadOrders(); loadProducts(); loadInventory();
+        toast(o.awaiting_delivery
+          ? `Order ${o.order_number} created. It is awaiting delivery of its inventory and will be released to the warehouse when it arrives.`
+          : `Order ${o.order_number} created${label ? ' with its label' : ''}.`, o.awaiting_delivery ? 7000 : 3500);
+        closeModal(); loadOrders(); loadProducts(); loadInventory();
       } catch (err) { fieldError($('#noNum'), err.message); } });
     };
   }

@@ -45,6 +45,7 @@
             <div class="seg" role="group" aria-label="Filter orders by status">
               <button type="button" class="segbtn active" data-status="label_ready" aria-pressed="true">Ready to print</button>
               <button type="button" class="segbtn" data-status="new" aria-pressed="false">Awaiting label</button>
+              <button type="button" class="segbtn" data-status="awaiting_delivery" aria-pressed="false">Awaiting delivery</button>
               <button type="button" class="segbtn" data-status="printed" aria-pressed="false">Printed</button>
               <button type="button" class="segbtn" data-status="all" aria-pressed="false">All statuses</button>
             </div>
@@ -91,7 +92,7 @@
               <h2 style="margin:0">Stock on hand</h2>
               <select id="ivFilterClient" style="width:auto" aria-label="Filter by client"><option value="">All clients</option></select>
             </div>
-            <p class="muted small">Reserved = units in orders not printed yet. Available = on hand − reserved.</p>
+            <p class="muted small">Ordered = units in deliveries not received yet. Reserved = units in orders not printed yet. Available = on hand + ordered − reserved.</p>
             <div id="whStock"></div>
           </div>
         </div>

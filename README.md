@@ -112,14 +112,20 @@ actually available.
 2. **Warehouse receives it.** On the warehouse Inventory tab, **Mark received**
    (correcting the quantity if fewer units arrived). The product's stock on hand
    goes up and the client gets a notification.
-3. **Orders reserve stock.** Units in orders that are not printed yet count as
-   *reserved*. **Available = on hand − reserved.** Creating an order is refused
-   for any product with fewer available units than requested.
+3. **Orders reserve stock, including stock on the way.** Units in deliveries
+   not received yet count as *ordered*; units in orders not printed yet count
+   as *reserved*. **Available = on hand + ordered − reserved.** Creating an
+   order is refused for any product with fewer available units than requested.
+   An order that needs more than what is physically on hand is created as
+   **Awaiting delivery** on both portals: the client can still attach its
+   label or delete it, the warehouse sees it under its own filter but cannot
+   print it. When a delivery is received, waiting orders are released oldest
+   first as soon as their units are on hand, and the client is notified.
 4. **Printing deducts.** The first time an order is printed its units leave
    stock. Reprints never deduct again.
 
-Both portals show on hand / reserved / available per product; the client's
-Create order form greys out products with nothing available.
+Both portals show on hand / ordered / reserved / available per product; the
+client's Create order form greys out products with nothing available.
 
 ## Warehouse queue filters
 

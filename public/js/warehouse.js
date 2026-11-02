@@ -99,7 +99,7 @@
         <p class="order-sub">${esc(o.client_name)}</p>
         <p class="order-fine">${o.items.length} line${o.items.length === 1 ? '' : 's'} · ${units} unit${units === 1 ? '' : 's'}<br>${o.ship_to ? esc(o.ship_to) : 'No ship-to address'}<br>${esc(fmtDate(o.created_at))}${o.printed_at ? `<br>Printed ${esc(fmtDate(o.printed_at))}` : ''}</p>
         <div class="order-actions">
-          <button class="btn gold print" type="button" data-id="${o.id}" ${o.has_label ? '' : 'disabled title="Client has not uploaded a label yet"'}>${icon('print')} ${o.status === 'printed' ? 'Reprint' : 'Print label'}</button>
+          <button class="btn gold print" type="button" data-id="${o.id}" ${o.awaiting_delivery ? 'disabled title="Waiting for the inventory to be received"' : o.has_label ? '' : 'disabled title="Client has not uploaded a label yet"'}>${icon('print')} ${o.status === 'printed' ? 'Reprint' : 'Print label'}</button>
           <button class="link pick" type="button" data-id="${o.id}">Pick list</button>
         </div>
       </article>`; }).join('')}</div>`;
@@ -123,6 +123,7 @@
   async function printLabel(id) {
     const o = orders.find((x) => x.id === id);
     if (!o || !o.has_label) { toast('No label on file for this order.'); return; }
+    if (o.awaiting_delivery) { toast('This order is waiting for its inventory to be received. Mark the delivery received on the Inventory tab first.', 6000); return; }
     const w = window.open(`/api/wh/orders/${id}/print-label`, '_blank');
     if (w) { try { w.addEventListener('load', () => setTimeout(() => w.print(), 400)); } catch { /* pdf viewers ignore this; user prints from the tab */ } }
     try {
@@ -142,6 +143,7 @@
         <button class="btn sm icon-btn" id="closeM" type="button" aria-label="Close">${icon('x')}</button>
       </div>
       <hr class="sep">
+      ${o.awaiting_delivery ? `<p class="small" style="margin:0 0 8px"><span class="status awaiting_delivery">Awaiting delivery</span> <span class="muted">This order needs inventory that has not been received yet. Mark the delivery received on the Inventory tab and it will become printable.</span></p>` : ''}
       <p class="muted small" style="margin:0 0 4px">Tick each line as you pick it.</p>
       <div class="stack">${o.items.map((it, i) => `
         <div class="pick-item">
@@ -160,7 +162,7 @@
       <hr class="sep">
       <div class="row" style="justify-content:flex-end">
         ${o.has_label ? `<a class="btn" target="_blank" rel="noopener" href="/api/wh/orders/${o.id}/print-label">${icon('file')} View label</a>` : '<span class="muted">Waiting for client to upload a label</span>'}
-        <button class="btn gold" id="printM" type="button" ${o.has_label ? '' : 'disabled'}>${icon('print')} Print label &amp; notify client</button>
+        <button class="btn gold" id="printM" type="button" ${o.has_label && !o.awaiting_delivery ? '' : 'disabled'}>${icon('print')} Print label &amp; notify client</button>
       </div>`;
     $('#modalBg').classList.add('open');
     $('#closeM').onclick = closeModal;
@@ -259,8 +261,8 @@
 
     const st = $('#whStock');
     st.innerHTML = stock.length
-      ? `<div class="table-wrap stock-table"><table><thead><tr><th>Client</th><th>Product</th><th class="num">On hand</th><th class="num">Reserved</th><th class="num">Available</th></tr></thead><tbody>${stock.map((s) => `
-        <tr><td>${esc(s.client_name)}</td><td><strong>${esc(s.name)}</strong><div class="cell-sub">${esc(s.sku || 'no SKU')}</div></td><td class="num">${s.stock}</td><td class="num">${s.committed}</td><td class="num"><strong class="${s.available > 0 ? 'ok-text' : 'danger-text'}">${s.available}</strong></td></tr>`).join('')}</tbody></table></div>`
+      ? `<div class="table-wrap stock-table"><table><thead><tr><th>Client</th><th>Product</th><th class="num">On hand</th><th class="num">Ordered</th><th class="num">Reserved</th><th class="num">Available</th></tr></thead><tbody>${stock.map((s) => `
+        <tr><td>${esc(s.client_name)}</td><td><strong>${esc(s.name)}</strong><div class="cell-sub">${esc(s.sku || 'no SKU')}</div></td><td class="num">${s.stock}</td><td class="num">${s.incoming}</td><td class="num">${s.committed}</td><td class="num"><strong class="${s.available > 0 ? 'ok-text' : 'danger-text'}">${s.available}</strong></td></tr>`).join('')}</tbody></table></div>`
       : `<div class="empty">${icon('box')}<strong>No products</strong><span>Stock appears here once clients add products.</span></div>`;
 
     const el = $('#whInbound');

@@ -67,11 +67,41 @@ const isDay = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
 // Products with their stock figures:
 //   stock     = units on hand (up when a delivery is received, down when an order is first printed)
-//   committed = units promised to orders that are not printed yet
-//   available = stock - committed: what a client may still create orders for
-const PRODUCT_SQL = `SELECT p.*, COALESCE((SELECT SUM(oi.quantity) FROM order_items oi JOIN orders o ON o.id = oi.order_id
-  WHERE oi.product_id = p.id AND o.status IN ('new','label_ready')), 0) AS committed FROM products p`;
-const withStock = (p) => (p ? { ...p, available: p.stock - p.committed } : p);
+//   incoming  = units in deliveries logged but not received yet ("ordered")
+//   committed = units promised to orders that are not printed yet (including ones awaiting delivery)
+//   available = stock + incoming - committed: what a client may still create orders for
+//   An order needing more than stock - committed is created "awaiting delivery" and released
+//   when the inventory arrives.
+const PRODUCT_SQL = `SELECT p.*,
+  COALESCE((SELECT SUM(oi.quantity) FROM order_items oi JOIN orders o ON o.id = oi.order_id
+    WHERE oi.product_id = p.id AND o.status IN ('new','label_ready')), 0) AS committed,
+  COALESCE((SELECT SUM(r.quantity) FROM inbound r WHERE r.product_id = p.id AND r.status = 'expected'), 0) AS incoming
+  FROM products p`;
+const withStock = (p) => (p ? { ...p, available: p.stock + p.incoming - p.committed } : p);
+const stockFields = (p) => ({ stock: p.stock, incoming: p.incoming, committed: p.committed, available: p.available });
+
+// Release orders that were waiting for inventory, oldest first, once their units are on hand.
+// The pool per product is stock minus what non-waiting unprinted orders already hold.
+function resolveAwaiting() {
+  const waiting = db.all("SELECT id, client_id, order_number FROM orders WHERE awaiting_stock = 1 AND status IN ('new','label_ready') ORDER BY created_at");
+  if (!waiting.length) return;
+  const pool = new Map();
+  const poolFor = (pid) => {
+    if (!pool.has(pid)) {
+      const r = db.get(`SELECT p.stock - COALESCE((SELECT SUM(oi.quantity) FROM order_items oi JOIN orders o ON o.id = oi.order_id
+        WHERE oi.product_id = p.id AND o.status IN ('new','label_ready') AND o.awaiting_stock = 0), 0) AS ready FROM products p WHERE p.id = ?`, pid);
+      pool.set(pid, r ? r.ready : 0);
+    }
+    return pool.get(pid);
+  };
+  for (const o of waiting) {
+    const lines = db.all('SELECT product_id, SUM(quantity) AS q FROM order_items WHERE order_id = ? AND product_id IS NOT NULL GROUP BY product_id', o.id);
+    if (!lines.every((l) => l.q <= poolFor(l.product_id))) continue;
+    for (const l of lines) pool.set(l.product_id, poolFor(l.product_id) - l.q);
+    db.run('UPDATE orders SET awaiting_stock = 0 WHERE id = ?', o.id);
+    notifyClient(o.client_id, { orderId: o.id, type: 'order_ready', message: `Order ${o.order_number}: the inventory it was waiting for has arrived, so the warehouse can now pick it.` });
+  }
+}
 const products = (where, ...params) => db.all(`${PRODUCT_SQL} ${where}`, ...params).map(withStock);
 const product = (where, ...params) => withStock(db.get(`${PRODUCT_SQL} ${where}`, ...params));
 
@@ -88,8 +118,11 @@ function loadOrders(where, orderBy, params, { includeClient = false } = {}) {
   return rows.map(serializeOrder);
 }
 function serializeOrder(o) {
+  const waiting = !!o.awaiting_stock && (o.status === 'new' || o.status === 'label_ready');
   const out = {
-    id: o.id, client_id: o.client_id, order_number: o.order_number, status: o.status, ship_to: o.ship_to,
+    id: o.id, client_id: o.client_id, order_number: o.order_number,
+    status: waiting ? 'awaiting_delivery' : o.status, // the label state is still visible via has_label
+    awaiting_delivery: waiting, ship_to: o.ship_to,
     items: o.items, has_label: !!o.label_filename, created_at: o.created_at, printed_at: o.printed_at || null,
   };
   if (o.client_name !== undefined) out.client_name = o.client_name;
@@ -131,6 +164,7 @@ function receiveInbound(id, quantity) {
       type: 'inventory_received',
       message: `Inventory received: ${q} × ${p ? p.name : 'product'}${r.tracking_id ? ` (tracking ${r.tracking_id})` : ''}. It is now available to order.`,
     });
+    resolveAwaiting();
     return r;
   });
 }
@@ -248,19 +282,23 @@ app.post('/api/client/orders', requireClient, (req, res) => {
     }
     const want = new Map();
     for (const l of lines) want.set(l.product_id, (want.get(l.product_id) || 0) + l.quantity);
+    // Units beyond what is on hand (after other orders) may still be ordered against incoming
+    // deliveries; such an order waits ("awaiting delivery") until the inventory is received.
+    let awaiting = false;
     for (const [pid, qty] of want) {
       const p = product('WHERE p.id = ?', pid);
       if (qty > p.available) {
         return { status: 409, error: p.available > 0
-          ? `Not enough inventory for "${p.name}": ${p.available} available, ${qty} requested.`
-          : `No available inventory for "${p.name}". Log it on the Inventory tab; once the warehouse receives it you can order it.` };
+          ? `Not enough inventory for "${p.name}": ${p.available} available (${Math.max(0, p.stock - p.committed)} on hand, ${p.incoming} on the way), ${qty} requested.`
+          : `No inventory for "${p.name}". Log a delivery for it on the Inventory tab, then you can order it.` };
       }
+      if (qty > p.stock - p.committed) awaiting = true;
     }
     let num = str(b.order_number, 64);
     if (!num) num = `M-${Date.now().toString(36).toUpperCase()}`;
     if (db.get('SELECT 1 AS x FROM orders WHERE client_id = ? AND order_number = ?', req.client.id, num)) return { status: 409, error: `Order ${num} already exists.` };
     const id = db.uid();
-    db.run('INSERT INTO orders (id, client_id, order_number, status, ship_to, created_at) VALUES (?,?,?,?,?,?)', id, req.client.id, num, 'new', str(b.ship_to, 500), now());
+    db.run('INSERT INTO orders (id, client_id, order_number, status, ship_to, created_at, awaiting_stock) VALUES (?,?,?,?,?,?,?)', id, req.client.id, num, 'new', str(b.ship_to, 500), now(), awaiting ? 1 : 0);
     lines.forEach((l, i) => db.run('INSERT INTO order_items (order_id, product_id, sku, name, quantity, position) VALUES (?,?,?,?,?,?)', id, l.product_id, l.sku, l.name, l.quantity, i));
     return { id };
   });
@@ -289,7 +327,7 @@ app.delete('/api/client/orders/:id', requireClient, (req, res) => {
   if (o.status === 'printed' || o.status === 'shipped') {
     return res.status(409).json({ error: `Order ${o.order_number} has already been printed and can no longer be deleted. Contact the warehouse.` });
   }
-  db.run('DELETE FROM orders WHERE id = ?', o.id);
+  db.tx(() => { db.run('DELETE FROM orders WHERE id = ?', o.id); resolveAwaiting(); }); // freed units may release a waiting order
   removeLabelFile(o.label_filename);
   res.json({ ok: true });
 });
@@ -306,7 +344,7 @@ app.post('/api/client/notifications/read', requireClient, (req, res) => {
 // ---------- client inventory ----------
 app.get('/api/client/inventory', requireClient, (req, res) => {
   const list = products('WHERE p.client_id = ? ORDER BY p.name', req.client.id)
-    .map((p) => ({ id: p.id, name: p.name, sku: p.sku, image: p.image, stock: p.stock, committed: p.committed, available: p.available }));
+    .map((p) => ({ id: p.id, name: p.name, sku: p.sku, image: p.image, ...stockFields(p) }));
   res.json({ products: list, inbound: inboundRows('WHERE r.client_id = ?', req.client.id) });
 });
 app.post('/api/client/inbound', requireClient, (req, res) => {
@@ -368,7 +406,9 @@ app.delete('/api/wh/clients/:id', requireWarehouse, (req, res) => {
 app.get('/api/wh/orders', requireWarehouse, (req, res) => {
   const q = req.query;
   const where = [], params = [];
-  if (q.status && q.status !== 'all') { where.push('o.status = ?'); params.push(str(q.status, 20)); }
+  // "awaiting_delivery" is a virtual status: unprinted orders still waiting for inventory.
+  if (q.status === 'awaiting_delivery') where.push("o.awaiting_stock = 1 AND o.status IN ('new','label_ready')");
+  else if (q.status && q.status !== 'all') { where.push('o.status = ? AND o.awaiting_stock = 0'); params.push(str(q.status, 20)); }
   if (q.client) { where.push('o.client_id = ?'); params.push(str(q.client, 64)); }
   if (isDay(str(q.from, 10))) { where.push("date(o.created_at, 'localtime') >= ?"); params.push(str(q.from, 10)); }
   if (isDay(str(q.to, 10))) { where.push("date(o.created_at, 'localtime') <= ?"); params.push(str(q.to, 10)); }
@@ -390,6 +430,7 @@ app.post('/api/wh/orders/:id/print', requireWarehouse, (req, res) => {
   const done = db.tx(() => {
     const o = db.get('SELECT * FROM orders WHERE id = ?', req.params.id);
     if (!o) return null;
+    if (o.awaiting_stock && (o.status === 'new' || o.status === 'label_ready')) return { error: `Order ${o.order_number} is awaiting delivery of its inventory and cannot be printed yet.` };
     const firstPrint = o.status !== 'printed' && o.status !== 'shipped' && !o.stock_deducted;
     if (firstPrint) {
       for (const it of db.all('SELECT product_id, quantity FROM order_items WHERE order_id = ? AND product_id IS NOT NULL', o.id)) {
@@ -401,6 +442,7 @@ app.post('/api/wh/orders/:id/print', requireWarehouse, (req, res) => {
     return o.id;
   });
   if (!done) return res.status(404).json({ error: 'Order not found.' });
+  if (done.error) return res.status(409).json({ error: done.error });
   res.json(orderById(done));
 });
 
@@ -421,7 +463,7 @@ app.get('/api/wh/inventory', requireWarehouse, (req, res) => {
   const client = str(req.query.client, 64), status = str(req.query.status, 20);
   const stock = db.all(`${PRODUCT_SQL} JOIN clients c ON c.id = p.client_id ${client ? 'WHERE p.client_id = ?' : ''} ORDER BY c.name, p.name`, ...(client ? [client] : []))
     .map(withStock)
-    .map((p) => ({ client_id: p.client_id, client_name: db.get('SELECT name FROM clients WHERE id = ?', p.client_id)?.name || 'Unknown', product_id: p.id, name: p.name, sku: p.sku, image: p.image, stock: p.stock, committed: p.committed, available: p.available }));
+    .map((p) => ({ client_id: p.client_id, client_name: db.get('SELECT name FROM clients WHERE id = ?', p.client_id)?.name || 'Unknown', product_id: p.id, name: p.name, sku: p.sku, image: p.image, ...stockFields(p) }));
   const where = [], params = [];
   if (client) { where.push('r.client_id = ?'); params.push(client); }
   if (status && status !== 'all') { where.push('r.status = ?'); params.push(status); }

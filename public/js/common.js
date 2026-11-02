@@ -120,7 +120,7 @@ window.G = (() => {
   }
 
   function statusLabel(s) {
-    return { new: 'Awaiting label', label_ready: 'Ready to print', printed: 'Printed', shipped: 'Shipped' }[s] || s;
+    return { new: 'Awaiting label', label_ready: 'Ready to print', awaiting_delivery: 'Awaiting delivery', printed: 'Printed', shipped: 'Shipped' }[s] || s;
   }
 
   // Local calendar day as YYYY-MM-DD: what the portals display and what the server's date filters compare.

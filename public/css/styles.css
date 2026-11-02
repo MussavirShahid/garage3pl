@@ -192,6 +192,7 @@ input[type=file] { font: inherit; color: var(--muted); min-height: 44px; padding
 .status.printed { background: var(--ok-soft); color: var(--ok); }
 .status.shipped { background: var(--neutral-soft); color: var(--neutral); }
 .status.expected { background: var(--warn-soft); color: var(--warn); }   /* inbound inventory on its way */
+.status.awaiting_delivery { background: var(--warn-soft); color: var(--warn); } /* order waiting for that inventory */
 .status.received { background: var(--ok-soft); color: var(--ok); }       /* inbound inventory in stock */
 .ok-text { color: var(--ok); }
 .danger-text { color: var(--danger); }
@@ -298,6 +299,9 @@ body.lb-open { overflow: hidden; }
 .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface-2); border-radius: 6px; padding: 1px 7px; font-size: var(--fs-sm); }
 
 @media (max-width: 640px) {
+  /* Order cards on phones: a product-tile-sized photo (the lightbox is there for a close look). */
+  .order-visual { aspect-ratio: auto; padding: var(--space-3); }
+  .order-visual .mosaic { max-width: 150px; }
   .container { padding: var(--space-5) var(--space-4) var(--space-7); }
   .card { padding: var(--space-5) var(--space-4); }
   .pick-item { flex-wrap: wrap; }
