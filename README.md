@@ -318,6 +318,9 @@ Built for exposure on the public internet:
   the stored type.
 - **Inputs** are trimmed and length-capped; all SQL is parameterised; error
   responses never include stack traces.
+- **Caching**: API responses are `no-store`; pages are re-checked on every
+  load; CSS/JS links carry a version stamp that changes with each update, so a
+  plain reload always shows the newest code (no "clear your cache").
 
 Behind a host's proxy (cPanel/Passenger, Cloudflare, Render) the app trusts one
 proxy hop for the client IP and HTTPS flag (`TRUST_PROXY=1`, the default).

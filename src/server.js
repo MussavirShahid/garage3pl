@@ -2,8 +2,8 @@ import express from 'express';
 import multer from 'multer';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { existsSync, mkdirSync, createReadStream, unlinkSync } from 'node:fs';
-import { randomUUID, randomInt } from 'node:crypto';
+import { existsSync, mkdirSync, createReadStream, unlinkSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { randomUUID, randomInt, createHash } from 'node:crypto';
 
 import { db } from './db.js';
 import { hashPassword } from './passwords.js';
@@ -36,7 +36,39 @@ app.disable('x-powered-by');
 app.use(securityHeaders);
 app.use(express.json({ limit: '256kb' }));
 app.use('/api', requireFetchHeader);
-app.use(express.static(PUBLIC_DIR, { index: 'index.html' }));
+app.use('/api', (_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); }); // private data: never cached
+
+// ---------- browser caching ----------
+// ASSET_V changes whenever a CSS/JS file changes. Pages are served with every /css and /js
+// reference stamped "?v=ASSET_V": the stamped files may be cached for a year, while pages and
+// unstamped files are always re-checked with the server. Result: a plain reload after an
+// update always shows the new version, with no manual cache clearing.
+const ASSET_V = (() => {
+  const h = createHash('sha1');
+  for (const dir of ['css', 'js']) {
+    const full = join(PUBLIC_DIR, dir);
+    if (!existsSync(full)) continue;
+    for (const f of readdirSync(full).sort()) { const p = join(full, f); h.update(f); h.update(String(statSync(p).size)); h.update(readFileSync(p)); }
+  }
+  return h.digest('hex').slice(0, 10);
+})();
+const pageCache = new Map();
+function servePage(file, res) {
+  let html = pageCache.get(file);
+  if (!html) {
+    html = readFileSync(join(PUBLIC_DIR, file), 'utf8').replace(/(["'])(\/(?:css|js)\/[^"'?#]+)\1/g, `$1$2?v=${ASSET_V}$1`);
+    pageCache.set(file, html);
+  }
+  res.setHeader('Cache-Control', 'no-cache');
+  res.type('html').send(html);
+}
+app.get(['/', '/index.html'], (_req, res) => servePage('index.html', res));
+app.get(/^\/([\w-]+\.html)$/, (req, res, next) => (existsSync(join(PUBLIC_DIR, req.params[0])) ? servePage(req.params[0], res) : next()));
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/')) res.setHeader('Cache-Control', req.query.v === ASSET_V ? 'public, max-age=31536000, immutable' : 'no-cache');
+  next();
+});
+app.use(express.static(PUBLIC_DIR, { index: false }));
 app.use('/files/products', express.static(UP_PRODUCTS, { dotfiles: 'deny', index: false }));
 
 // ---------- uploads (type allow-lists, random file names, size caps) ----------
