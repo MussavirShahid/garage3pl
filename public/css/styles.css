@@ -196,6 +196,7 @@ input[type=file] { font: inherit; color: var(--muted); min-height: 44px; padding
 .status.received { background: var(--ok-soft); color: var(--ok); }       /* inbound inventory in stock */
 .status.not_received { background: var(--danger-soft); color: var(--danger); } /* delivery closed with nothing arrived */
 button.link.setStock { font-weight: 600; color: var(--text); text-decoration: underline dotted; text-underline-offset: 3px; padding: 0 4px; min-height: 0; }
+button.link.setStock::after { content: none; } /* it is a number, not a "Learn more ›" link */
 button.link.setStock:hover { color: var(--accent); }
 .ok-text { color: var(--ok); }
 .danger-text { color: var(--danger); }
