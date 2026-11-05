@@ -159,7 +159,7 @@
       <div class="client-row">
         <div class="grow"><strong>${esc(r.product_name)}</strong> <span class="muted">×${r.quantity}</span><div class="cell-sub">${esc(r.sku || '')}${r.tracking_id ? ` · Tracking ${esc(r.tracking_id)}` : ''}${r.created_by === 'warehouse' ? ' · added by warehouse' : ''}</div></div>
         <div class="meta"><span class="muted small">Expected</span> <strong>${r.expected_at ? esc(r.expected_at) : '—'}</strong></div>
-        <span class="status ${esc(r.status)}">${r.status === 'received' ? `Received ${esc(fmtDate(r.received_at))}${r.received_quantity !== r.quantity ? ` (×${r.received_quantity})` : ''}` : 'Expected'}</span>
+        <span class="status ${esc(r.status)}">${r.status === 'received' ? `Received ${esc(fmtDate(r.received_at))}${r.received_quantity !== r.quantity ? ` (×${r.received_quantity})` : ''}` : r.status === 'not_received' ? `Not received ${esc(fmtDate(r.received_at))}` : 'Expected'}</span>
         ${r.status === 'expected' ? `<button class="btn sm danger cancelIn" type="button" data-id="${r.id}">Cancel</button>` : ''}
       </div>`).join('')}</div>`;
     $$('.cancelIn', el).forEach((b) => b.addEventListener('click', async () => {

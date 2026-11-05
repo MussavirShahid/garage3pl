@@ -150,22 +150,33 @@ function newInbound({ client_id, product_id, quantity, expected_at, tracking_id,
     id, client_id, product_id, q, date, str(tracking_id, 100), 'expected', created_by, now());
   return { id };
 }
-// Mark a delivery received: stock goes up by what actually arrived, and the client is told.
+// Close an expected delivery with the quantity that actually arrived.
+//   quantity omitted  -> the expected quantity
+//   quantity 0        -> nothing arrived: status "not_received", stock untouched
+//   anything else     -> must be a whole number >= 0, otherwise an error (never a silent fallback)
 function receiveInbound(id, quantity) {
   return db.tx(() => {
     const r = db.get('SELECT * FROM inbound WHERE id = ?', id);
-    if (!r || r.status === 'received') return r;
-    const parsed = parseInt(quantity, 10);
-    const q = Number.isInteger(parsed) && parsed >= 1 ? parsed : r.quantity;
-    db.run('UPDATE inbound SET status = ?, received_at = ?, received_quantity = ? WHERE id = ?', 'received', now(), q, id);
-    db.run('UPDATE products SET stock = stock + ? WHERE id = ?', q, r.product_id);
+    if (!r) return { error: 'Delivery not found.', status: 404 };
+    if (r.status !== 'expected') return { error: 'This delivery was already closed.', status: 409 };
+    let q = r.quantity;
+    if (quantity !== undefined && quantity !== null && String(quantity).trim() !== '') {
+      const parsed = Number(String(quantity).trim());
+      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 1000000) return { error: 'Quantity received must be a whole number (0 if nothing arrived).', status: 400 };
+      q = parsed;
+    }
     const p = db.get('SELECT name FROM products WHERE id = ?', r.product_id);
-    notifyClient(r.client_id, {
-      type: 'inventory_received',
-      message: `Inventory received: ${q} × ${p ? p.name : 'product'}${r.tracking_id ? ` (tracking ${r.tracking_id})` : ''}. It is now available to order.`,
-    });
+    const what = `${r.quantity} × ${p ? p.name : 'product'}${r.tracking_id ? ` (tracking ${r.tracking_id})` : ''}`;
+    if (q === 0) {
+      db.run('UPDATE inbound SET status = ?, received_at = ?, received_quantity = 0 WHERE id = ?', 'not_received', now(), id);
+      notifyClient(r.client_id, { type: 'inventory_not_received', message: `Delivery not received: ${what} did not arrive at the warehouse. Stock is unchanged; log a new delivery when it ships.` });
+    } else {
+      db.run('UPDATE inbound SET status = ?, received_at = ?, received_quantity = ? WHERE id = ?', 'received', now(), q, id);
+      db.run('UPDATE products SET stock = stock + ? WHERE id = ?', q, r.product_id);
+      notifyClient(r.client_id, { type: 'inventory_received', message: `Inventory received: ${q} × ${p ? p.name : 'product'}${q !== r.quantity ? ` (${r.quantity} were expected)` : ''}${r.tracking_id ? ` (tracking ${r.tracking_id})` : ''}. It is now available to order.` });
+    }
     resolveAwaiting();
-    return r;
+    return { id: r.id };
   });
 }
 
@@ -483,11 +494,22 @@ app.post('/api/wh/inbound', requireWarehouse, (req, res) => {
   res.json(inboundById(r.id));
 });
 app.post('/api/wh/inbound/:id/receive', requireWarehouse, (req, res) => {
-  const r = db.get('SELECT id, status FROM inbound WHERE id = ?', req.params.id);
-  if (!r) return res.status(404).json({ error: 'Delivery not found.' });
-  if (r.status === 'received') return res.status(409).json({ error: 'Already received.' });
-  receiveInbound(r.id, (req.body || {}).quantity);
+  const r = receiveInbound(req.params.id, (req.body || {}).quantity);
+  if (r.error) return res.status(r.status).json({ error: r.error });
   res.json(inboundById(r.id));
+});
+
+// Correct a product's on-hand count (stock take, damaged units, a receipt entered wrongly).
+app.patch('/api/wh/products/:id/stock', requireWarehouse, (req, res) => {
+  const p = db.get('SELECT id, stock, name FROM products WHERE id = ?', req.params.id);
+  if (!p) return res.status(404).json({ error: 'Product not found.' });
+  const n = Number(String((req.body || {}).stock ?? '').trim());
+  if (!Number.isInteger(n) || n < 0 || n > 1000000) return res.status(400).json({ error: 'On hand must be a whole number of 0 or more.' });
+  db.tx(() => {
+    db.run('UPDATE products SET stock = ? WHERE id = ?', n, p.id);
+    if (n > p.stock) resolveAwaiting(); // more units on hand may release a waiting order
+  });
+  res.json(product('WHERE p.id = ?', p.id));
 });
 
 // ---------- label files (served to the owning client and the warehouse; cookies work in a new tab) ----------

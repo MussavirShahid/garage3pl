@@ -194,6 +194,9 @@ input[type=file] { font: inherit; color: var(--muted); min-height: 44px; padding
 .status.expected { background: var(--warn-soft); color: var(--warn); }   /* inbound inventory on its way */
 .status.awaiting_delivery { background: var(--warn-soft); color: var(--warn); } /* order waiting for that inventory */
 .status.received { background: var(--ok-soft); color: var(--ok); }       /* inbound inventory in stock */
+.status.not_received { background: var(--danger-soft); color: var(--danger); } /* delivery closed with nothing arrived */
+button.link.setStock { font-weight: 600; color: var(--text); text-decoration: underline dotted; text-underline-offset: 3px; padding: 0 4px; min-height: 0; }
+button.link.setStock:hover { color: var(--accent); }
 .ok-text { color: var(--ok); }
 .danger-text { color: var(--danger); }
 

@@ -262,8 +262,19 @@
     const st = $('#whStock');
     st.innerHTML = stock.length
       ? `<div class="table-wrap stock-table"><table><thead><tr><th>Client</th><th>Product</th><th class="num">On hand</th><th class="num">Ordered</th><th class="num">Reserved</th><th class="num">Available</th></tr></thead><tbody>${stock.map((s) => `
-        <tr><td>${esc(s.client_name)}</td><td><strong>${esc(s.name)}</strong><div class="cell-sub">${esc(s.sku || 'no SKU')}</div></td><td class="num">${s.stock}</td><td class="num">${s.incoming}</td><td class="num">${s.committed}</td><td class="num"><strong class="${s.available > 0 ? 'ok-text' : 'danger-text'}">${s.available}</strong></td></tr>`).join('')}</tbody></table></div>`
+        <tr><td>${esc(s.client_name)}</td><td><strong>${esc(s.name)}</strong><div class="cell-sub">${esc(s.sku || 'no SKU')}</div></td><td class="num"><button type="button" class="link setStock" data-pid="${s.product_id}" data-cur="${s.stock}" data-name="${esc(s.name)}" title="Correct the on-hand count" aria-label="Set on hand for ${esc(s.name)}">${s.stock}</button></td><td class="num">${s.incoming}</td><td class="num">${s.committed}</td><td class="num"><strong class="${s.available > 0 ? 'ok-text' : 'danger-text'}">${s.available}</strong></td></tr>`).join('')}</tbody></table></div>
+        <p class="muted small" style="margin:8px 0 0">Click an on-hand number to correct it (stock take, damaged units, a receipt entered wrongly).</p>`
       : `<div class="empty">${icon('box')}<strong>No products</strong><span>Stock appears here once clients add products.</span></div>`;
+    $$('.setStock', st).forEach((b) => b.addEventListener('click', async () => {
+      const v = prompt(`On hand for ${b.dataset.name} (currently ${b.dataset.cur}). Enter the correct count:`, b.dataset.cur);
+      if (v === null) return;
+      if (!/^\d+$/.test(v.trim())) { toast('Enter a whole number of 0 or more.', 5000); return; }
+      try {
+        await api(`/api/wh/products/${b.dataset.pid}/stock`, { method: 'PATCH', body: { stock: v.trim() } });
+        toast(`On hand for ${b.dataset.name} set to ${v.trim()}.`);
+        loadInventory();
+      } catch (err) { toast(err.message, 6000); }
+    }));
 
     const el = $('#whInbound');
     if (!inbound.length) { el.innerHTML = `<div class="empty">${icon('calendar')}<strong>No incoming inventory</strong><span>Clients log deliveries from their portal, or add one on the left.</span></div>`; return; }
@@ -271,15 +282,16 @@
       <div class="client-row">
         <div class="grow"><strong>${esc(r.product_name)}</strong> <span class="muted">×${r.quantity}</span><div class="cell-sub">${esc(r.client_name)}${r.sku ? ` · ${esc(r.sku)}` : ''}${r.tracking_id ? ` · Tracking ${esc(r.tracking_id)}` : ''}</div></div>
         <div class="meta"><span class="muted small">Expected</span> <strong>${r.expected_at ? esc(r.expected_at) : '—'}</strong></div>
-        <span class="status ${esc(r.status)}">${r.status === 'received' ? `Received ${esc(fmtDate(r.received_at))}${r.received_quantity !== r.quantity ? ` (×${r.received_quantity})` : ''}` : 'Expected'}</span>
+        <span class="status ${esc(r.status)}">${r.status === 'received' ? `Received ${esc(fmtDate(r.received_at))}${r.received_quantity !== r.quantity ? ` (×${r.received_quantity})` : ''}` : r.status === 'not_received' ? `Not received ${esc(fmtDate(r.received_at))}` : 'Expected'}</span>
         ${r.status === 'expected' ? `<button class="btn gold sm recvIn" type="button" data-id="${r.id}" data-qty="${r.quantity}" data-name="${esc(r.product_name)}">${icon('check')} Mark received</button>` : ''}
       </div>`).join('')}</div>`;
     $$('.recvIn', el).forEach((b) => b.addEventListener('click', async () => {
-      const q = prompt(`Quantity received for ${b.dataset.name} (expected ${b.dataset.qty}):`, b.dataset.qty);
+      const q = prompt(`Quantity received for ${b.dataset.name} (expected ${b.dataset.qty}).\nEnter 0 if nothing arrived:`, b.dataset.qty);
       if (q === null) return;
+      if (!/^\d+$/.test(q.trim())) { toast('Enter a whole number: the units that arrived, or 0 if nothing did.', 6000); return; }
       try {
-        await busy(b, () => api(`/api/wh/inbound/${b.dataset.id}/receive`, { method: 'POST', body: { quantity: q } }));
-        toast('Received — stock updated and the client has been notified.');
+        await busy(b, () => api(`/api/wh/inbound/${b.dataset.id}/receive`, { method: 'POST', body: { quantity: q.trim() } }));
+        toast(Number(q) === 0 ? 'Marked as not received — stock unchanged and the client has been told.' : `Received ${q.trim()} — stock updated and the client has been notified.`);
         loadInventory();
       } catch (err) { toast(err.message, 6000); }
     }));

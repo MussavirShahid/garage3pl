@@ -110,8 +110,11 @@ actually available.
    warehouse can do the same for a client on its own Inventory tab (and tick
    *already received* to put it straight into stock).
 2. **Warehouse receives it.** On the warehouse Inventory tab, **Mark received**
-   (correcting the quantity if fewer units arrived). The product's stock on hand
-   goes up and the client gets a notification.
+   and enter how many units arrived (fewer than expected is fine; **0** closes
+   the delivery as *Not received* and leaves stock alone). The product's stock
+   on hand goes up by that number and the client gets a notification.
+   To correct an on-hand count later (stock take, damaged units, a receipt
+   entered wrongly), click the number in the warehouse's Stock on hand table.
 3. **Orders reserve stock, including stock on the way.** Units in deliveries
    not received yet count as *ordered*; units in orders not printed yet count
    as *reserved*. **Available = on hand + ordered − reserved.** Creating an
