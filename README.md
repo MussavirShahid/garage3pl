@@ -327,6 +327,19 @@ Still your job: keep the host's SSL certificate valid, choose a strong
 warehouse passcode, and keep `data/` and `uploads/` out of any public web
 folder.
 
+## Future ideas (parked)
+
+Not built yet; noted so they are not forgotten.
+
+- **Tracking numbers as links.** Detect the carrier from the number's format
+  (UPS `1Z…`, FedEx 12–15 digits, USPS 20–22 digits) and make the tracking
+  ID on both portals' Incoming deliveries lists a one-click link to the
+  carrier's tracking page.
+- **Search deliveries.** A search box on both Incoming deliveries lists to
+  filter by tracking ID, product or client.
+- **Multi-page label PDFs.** Stamp or split multi-page labels and assign each
+  page to an order (auto-match by ship-to text, manual fallback).
+
 ## Layout
 
 ```
